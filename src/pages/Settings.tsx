@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react'
+import { UserButton } from '@clerk/react'
 import { CaretUpDown, Check, DownloadSimple, MagnifyingGlass, UploadSimple } from '@phosphor-icons/react'
-import { BUCKETS, db, exportBackup, importBackup, wipeAll, type Bucket, type Settings } from '../db'
+import { replaceAll, saveSettings, wipeAll } from '../cloud'
+import { BUCKETS, exportBackup, rekey, type Bucket } from '../db'
 import { currencySymbol, today } from '../lib'
 import { BUCKET_BG, Button, Card, ConfirmButton, PageHeader, Segmented, Switch, useApp, useMonthlyIncome } from '../ui'
 
 // Every ISO 4217 currency the runtime knows about.
 const CURRENCIES = Intl.supportedValuesOf('currency')
 
-const update = (p: Partial<Settings>) => db.settings.update('app', p)
+const update = saveSettings
 
 export function SettingsPage() {
   const { t, s } = useApp()
@@ -16,6 +18,10 @@ export function SettingsPage() {
     <>
       <PageHeader title={t.nav.settings} />
       <div className="grid max-w-3xl gap-4">
+        <Card title={t.account} hint={t.accountHint}>
+          <UserButton showName />
+        </Card>
+
         <Card>
           <div className="grid gap-6">
             <div className="grid gap-2">
@@ -342,7 +348,7 @@ function DataCard() {
 
   async function confirmImport() {
     try {
-      await importBackup(pending)
+      await replaceAll(rekey(pending))
       setMsg({ ok: true, text: t.imported })
     } catch {
       setMsg({ ok: false, text: t.importFailed })

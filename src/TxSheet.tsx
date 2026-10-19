@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { BUCKETS, db, type Bucket, type Kind, type Tx } from './db'
+import { add, remove, update } from './cloud'
+import { BUCKETS, type Bucket, type Kind, type Tx } from './db'
 import { DatePicker } from './DatePicker'
 import { parseAmount, toInput } from './lib'
 import { BUCKET_BG, Button, CategoryPicker, ConfirmButton, Field, inputCls, MoneyInput, Segmented, useApp } from './ui'
@@ -10,7 +11,7 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
   const [amount, setAmount] = useState(tx ? toInput(tx.amount) : '')
   const [note, setNote] = useState(tx?.note ?? '')
   const [date, setDate] = useState(tx?.date ?? defaultDate)
-  const [categoryId, setCategoryId] = useState<number | null>(tx?.categoryId ?? null)
+  const [categoryId, setCategoryId] = useState<string | null>(tx?.categoryId ?? null)
   const [bucket, setBucket] = useState<Bucket>(tx?.bucket ?? 'needs')
   // The bucket follows the category's default; the picker only shows for exceptions.
   const [customBucket, setCustomBucket] = useState(!!tx?.bucket && tx.bucket !== cat.get(tx.categoryId)?.bucket)
@@ -21,7 +22,7 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
     setCategoryId(null)
   }
 
-  function pickCategory(id: number) {
+  function pickCategory(id: string) {
     setCategoryId(id)
     const c = cat.get(id)
     if (c?.kind === 'expense') setBucket(c.bucket)
@@ -34,8 +35,8 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
     setErrors(errs)
     if (!minor || !categoryId || !date) return
     const data = { kind, amount: minor, note: note.trim(), date, categoryId, bucket: kind === 'income' ? null : bucket }
-    if (tx) await db.txs.update(tx.id, data)
-    else await db.txs.add(data as Tx)
+    if (tx) await update('txs', [tx.id], data)
+    else await add('txs', [data])
     onDone()
   }
 
@@ -91,7 +92,7 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
           <ConfirmButton
             label={t.delete}
             onConfirm={async () => {
-              await db.txs.delete(tx.id)
+              await remove('txs', [tx.id])
               onDone()
             }}
           />

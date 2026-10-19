@@ -1,6 +1,6 @@
 [package]
 name = "leak"
-version = "0.3.0"
+version = "0.4.0"
 description = "Leak - personal finance tracker"
 edition = "2021"
 license = "AGPL-3.0-or-later"

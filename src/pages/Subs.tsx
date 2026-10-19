@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
+import { add, remove, sb, update } from '../cloud'
 import { BUCKETS, db, type Bucket, type Sub, type Tx } from '../db'
 import { dueDates, monthOf, parseAmount, shiftMonth, today, toInput } from '../lib'
 import { Button, CatIcon, CategoryPicker, ConfirmButton, Empty, DayOfMonthPicker, Field, inputCls, MoneyInput, PageHeader, Segmented, Sheet, Stat, useApp } from '../ui'
@@ -8,16 +9,18 @@ import { Button, CatIcon, CategoryPicker, ConfirmButton, Empty, DayOfMonthPicker
 /** Turns every subscription charge owed up to the current month into a real transaction. */
 export async function syncSubs() {
   const current = monthOf(today())
-  // One rw transaction, so overlapping calls (StrictMode, focus) never double-charge.
-  await db.transaction('rw', [db.subs, db.txs, db.categories], async () => {
-    for (const sub of await db.subs.toArray()) {
-      const dates = dueDates(sub.lastMonth, current, sub.day)
-      if (!dates.length) continue
-      const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'
-      await db.txs.bulkAdd(dates.map((date) => ({ date, amount: sub.amount, kind: 'expense', categoryId: sub.categoryId, bucket, note: sub.name }) as Tx))
-      await db.subs.update(sub.id, { lastMonth: current })
-    }
-  })
+  for (const sub of await db.subs.toArray()) {
+    const dates = dueDates(sub.lastMonth, current, sub.day)
+    if (!dates.length) continue
+    // Claim the months on the server first: only the call that moves lastMonth on from the value it saw
+    // charges, so overlapping calls (StrictMode, focus, another device) never double-charge.
+    const claimed = await sb.from('subs').update({ last_month: current }).eq('id', sub.id).eq('last_month', sub.lastMonth).select('id')
+    if (claimed.error) throw claimed.error
+    if (!claimed.data.length) continue
+    await db.subs.update(sub.id, { lastMonth: current })
+    const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'
+    await add('txs', dates.map((date): Omit<Tx, 'id'> => ({ date, amount: sub.amount, kind: 'expense', categoryId: sub.categoryId, bucket, note: sub.name })))
+  }
 }
 
 export function SubsPage() {
@@ -84,7 +87,7 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
   const [bucket, setBucket] = useState<Bucket>(sub?.bucket ?? (categoryId ? cat.get(categoryId)?.bucket : undefined) ?? 'needs')
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
 
-  function pickCategory(id: number) {
+  function pickCategory(id: string) {
     setCategoryId(id)
     setBucket(cat.get(id)?.bucket ?? bucket)
   }
@@ -95,9 +98,9 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
     setErrors({ name: name.trim() ? undefined : t.nameRequired, amount: minor ? undefined : t.amountInvalid })
     if (!name.trim() || !minor || !categoryId) return
     const data = { name: name.trim(), amount: minor, day, categoryId, bucket }
-    if (sub) await db.subs.update(sub.id, data)
+    if (sub) await update('subs', [sub.id], data)
     // A new subscription is charged starting this month.
-    else await db.subs.add({ ...data, lastMonth: shiftMonth(monthOf(today()), -1) } as Sub)
+    else await add('subs', [{ ...data, lastMonth: shiftMonth(monthOf(today()), -1) }])
     await syncSubs()
     onDone()
   }
@@ -123,7 +126,7 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
           <ConfirmButton
             label={t.cancelSub}
             onConfirm={async () => {
-              await db.subs.delete(sub.id) // past charges stay recorded
+              await remove('subs', [sub.id]) // past charges stay recorded
               onDone()
             }}
           />

@@ -31,7 +31,7 @@
     "copyright": "Copyright (c) 2026 Kantor Istvan. AGPL-3.0-or-later.",
     "category": "Finance",
     "shortDescription": "Personal finance tracker built on the 50/30/20 rule",
-    "longDescription": "Leak is a local-first personal finance tracker. Record income and expenses, split them into Needs, Wants and Investments, and see how each month tracks against the 50/30/20 budget.",
+    "longDescription": "Leak is a personal finance tracker that syncs across your devices. Record income and expenses, split them into Needs, Wants and Investments, and see how each month tracks against the 50/30/20 budget.",
     "license": "AGPL-3.0-or-later",
     "icon": [
       "icons/32x32.png",

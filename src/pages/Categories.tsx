@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { Plus } from '@phosphor-icons/react'
+import { add, remove, update } from '../cloud'
 import { BUCKETS, db, type Bucket, type Category, type Kind } from '../db'
 import { ICON_GROUPS } from '../icons'
 import { hexToHsv, hsvToHex } from '../lib'
@@ -252,16 +253,16 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
     e.preventDefault()
     if (!name.trim()) return setError(t.nameRequired)
     const data = { name: name.trim(), color, bucket, icon, kind: editing.kind }
-    if (existing) await db.categories.update(existing.id, data)
-    else await db.categories.add(data as Category)
+    if (existing) await update('categories', [existing.id], data)
+    else await add('categories', [data])
     onDone()
   }
 
-  async function remove() {
+  async function removeCategory() {
     const used =
       (await db.txs.where('categoryId').equals(existing!.id).count()) + (await db.subs.where('categoryId').equals(existing!.id).count())
     if (used) return setError(t.categoryInUse(used))
-    await db.categories.delete(existing!.id)
+    await remove('categories', [existing!.id])
     onDone()
   }
 
@@ -293,7 +294,7 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {existing ? <ConfirmButton label={t.delete} onConfirm={remove} /> : <span />}
+        {existing ? <ConfirmButton label={t.delete} onConfirm={removeCategory} /> : <span />}
         <div className="flex gap-2">
           <Button variant="ghost" onClick={onDone}>
             {t.cancel}

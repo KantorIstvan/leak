@@ -1,4 +1,5 @@
 // Dev-only: open http://localhost:5173/?demo to fill an empty DB with a sample year.
+import { add } from './cloud'
 import { db, type Bucket, type Tx } from './db'
 
 // Monthly totals in HUF: [income, needs, wants, investments]
@@ -35,9 +36,9 @@ export async function seedDemo() {
       }),
     )
   })
-  await db.txs.bulkAdd(txs as Tx[])
-  await db.goals.bulkAdd([
+  await add('txs', txs)
+  await add('goals', [
     { name: 'Sony Alpha 6700', target: 40000000, saved: 12000000 },
     { name: 'Sigma 50mm F2.8', target: 16000000, saved: 16000000 },
-  ] as never)
+  ])
 }
