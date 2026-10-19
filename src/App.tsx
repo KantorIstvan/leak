@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { AuthenticateWithRedirectCallback, SignInButton, useAuth } from '@clerk/react'
+import { SignInButton, useAuth } from '@clerk/react'
 import { ArrowsClockwise, CalendarBlank, ChartBar, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { finishSso } from './clerk'
 import { clearLocal, pull, setToken, start } from './cloud'
 import { db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
@@ -51,9 +52,22 @@ function useTheme(theme: Theme | undefined) {
   }, [theme])
 }
 
+// Desktop return from Google/GitHub: Clerk's native mode lands back on the app with ?rotating_token_nonce=….
+const ssoNonce = new URLSearchParams(location.search).get('rotating_token_nonce')
+let ssoStarted = false // StrictMode runs effects twice; the nonce only works once
+
 export default function App() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
   const [synced, setSynced] = useState(false)
+  const [finishing, setFinishing] = useState(!!ssoNonce)
+  useEffect(() => {
+    if (!isLoaded || !ssoNonce || ssoStarted) return
+    ssoStarted = true
+    finishSso(ssoNonce).finally(() => {
+      history.replaceState(null, '', '/')
+      setFinishing(false)
+    })
+  }, [isLoaded])
   useEffect(() => {
     if (!isLoaded) return
     setSynced(false)
@@ -64,9 +78,7 @@ export default function App() {
     start().finally(() => setSynced(true))
   }, [isLoaded, isSignedIn, getToken])
 
-  if (!isLoaded || (isSignedIn && !synced)) return null
-  // Back from Google/GitHub: Clerk finishes the sign-in here, then reloads the app signed in.
-  if (!isSignedIn && location.hash.startsWith('#/sso-callback')) return <AuthenticateWithRedirectCallback />
+  if (!isLoaded || finishing || (isSignedIn && !synced)) return null
   return isSignedIn ? <Main /> : <SignedOut />
 }
 
