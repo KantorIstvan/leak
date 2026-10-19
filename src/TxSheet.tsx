@@ -2,10 +2,10 @@ import { useState, type FormEvent } from 'react'
 import { BUCKETS, db, type Bucket, type Kind, type Tx } from './db'
 import { DatePicker } from './DatePicker'
 import { parseAmount, toInput } from './lib'
-import { BUCKET_BG, Button, ConfirmButton, Field, inputCls, Segmented, useApp } from './ui'
+import { BUCKET_BG, Button, CategoryPicker, ConfirmButton, Field, inputCls, MoneyInput, Segmented, useApp } from './ui'
 
 export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: string; onDone: () => void }) {
-  const { t, cats, cat } = useApp()
+  const { t, cat } = useApp()
   const [kind, setKind] = useState<Kind>(tx?.kind ?? 'expense')
   const [amount, setAmount] = useState(tx ? toInput(tx.amount) : '')
   const [note, setNote] = useState(tx?.note ?? '')
@@ -15,8 +15,6 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
   // The bucket follows the category's default; the picker only shows for exceptions.
   const [customBucket, setCustomBucket] = useState(!!tx?.bucket && tx.bucket !== cat.get(tx.categoryId)?.bucket)
   const [errors, setErrors] = useState<{ amount?: string; category?: string }>({})
-
-  const options = cats.filter((c) => c.kind === kind)
 
   function pickKind(k: Kind) {
     setKind(k)
@@ -54,15 +52,7 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
       />
 
       <Field label={t.amount} error={errors.amount}>
-        <input
-          className={`${inputCls} num text-lg! font-semibold`}
-          inputMode="decimal"
-          autoComplete="off"
-          autoFocus
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          aria-invalid={!!errors.amount}
-        />
+        <MoneyInput className="text-lg! font-semibold" autoFocus value={amount} onChange={setAmount} aria-invalid={!!errors.amount} />
       </Field>
 
       <DatePicker label={t.date} value={date} onChange={setDate} />
@@ -71,31 +61,7 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
         <input className={inputCls} placeholder={t.notePlaceholder} value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
 
-      <fieldset className="grid gap-2">
-        <legend className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.category}</legend>
-        <div className="flex flex-wrap gap-2">
-          {options.map((c) => {
-            const on = c.id === categoryId
-            return (
-              <button
-                key={c.id}
-                type="button"
-                aria-pressed={on}
-                onClick={() => pickCategory(c.id)}
-                className={`flex h-9 items-center gap-2 rounded-full px-3 text-sm transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
-                  on
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                    : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
-                }`}
-              >
-                <span className="size-2.5 rounded-full" style={{ background: c.color }} aria-hidden />
-                {c.name}
-              </button>
-            )
-          })}
-        </div>
-        {errors.category && <span className="text-xs font-medium text-rose-700 dark:text-rose-400">{errors.category}</span>}
-      </fieldset>
+      <CategoryPicker kind={kind} value={categoryId} onChange={pickCategory} error={errors.category} />
 
       {kind === 'expense' && categoryId && (
         <div className="grid gap-2">

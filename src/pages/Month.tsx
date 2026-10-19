@@ -1,13 +1,12 @@
-import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
-import { db, type Kind, type Tx } from '../db'
+import { db, type Tx } from '../db'
 import { plan, ranked, shiftMonth, summarize } from '../lib'
-import { BUCKET_BG, Button, Card, CategoryBars, Empty, PageHeader, PeriodNav, Segmented, Stat, useApp } from '../ui'
+import { BUCKET_BG, Button, Card, CategoryBars, PageHeader, PeriodNav, Stat, useApp } from '../ui'
+import { TxBrowser } from '../TxBrowser'
 
 export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; setMonth: (m: string) => void; onAdd: () => void; onEdit: (tx: Tx) => void }) {
   const { t, s, money, cats } = useApp()
-  const [filter, setFilter] = useState<'all' | Kind>('all')
   const txs = useLiveQuery(() => db.txs.where('date').between(`${month}-01`, `${month}-31`, true, true).toArray(), [month])
 
   const [y, m] = month.split('-').map(Number)
@@ -31,7 +30,6 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
   const remaining = sum.income - sum.expense
   const pct = (n: number) => (sum.income ? `${Math.round((n / sum.income) * 100)}%` : '')
   const expenseIds = new Set(cats.filter((c) => c.kind === 'expense').map((c) => c.id))
-  const list = txs.filter((tx) => filter === 'all' || tx.kind === filter).sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
 
   return (
     <>
@@ -85,36 +83,8 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
           )}
         </Card>
 
-        <Card
-          title={t.transactions}
-          className="lg:col-span-3 lg:row-span-2"
-          action={
-            <Segmented
-              label={t.transactions}
-              value={filter}
-              onChange={setFilter}
-              options={[
-                { value: 'all', label: t.all },
-                { value: 'expense', label: t.expenses },
-                { value: 'income', label: t.income },
-              ]}
-            />
-          }
-        >
-          {list.length ? (
-            <TxList txs={list} onEdit={onEdit} />
-          ) : (
-            <Empty
-              title={t.emptyMonth}
-              hint={t.emptyMonthHint}
-              action={
-                <Button variant="primary" onClick={onAdd}>
-                  <Plus size={16} weight="bold" />
-                  {t.add}
-                </Button>
-              }
-            />
-          )}
+        <Card title={t.transactions} className="lg:col-span-3 lg:row-span-2">
+          <TxBrowser key={month} txs={txs} month={month} onAdd={onAdd} onEdit={onEdit} />
         </Card>
 
         {sum.expense > 0 && (
@@ -124,44 +94,5 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
         )}
       </div>
     </>
-  )
-}
-
-function TxList({ txs, onEdit }: { txs: Tx[]; onEdit: (tx: Tx) => void }) {
-  const { t, cat, money } = useApp()
-  const day = new Intl.DateTimeFormat(t.locale, { month: 'short', day: 'numeric' })
-  return (
-    <ul className="-mx-2 grid">
-      {txs.map((tx) => {
-        const c = cat.get(tx.categoryId)
-        const income = tx.kind === 'income'
-        return (
-          <li key={tx.id}>
-            <button
-              type="button"
-              onClick={() => onEdit(tx)}
-              className="flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-zinc-800/60"
-            >
-              <span className="grid size-9 shrink-0 place-items-center rounded-lg" style={{ background: `${c?.color ?? '#a1a1aa'}22` }} aria-hidden>
-                <span className="size-3 rounded-full" style={{ background: c?.color ?? '#a1a1aa' }} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{tx.note || c?.name}</span>
-                <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">
-                  {[tx.note && c?.name, tx.bucket && t.bucket[tx.bucket]].filter(Boolean).join(' · ') || t.kind.income}
-                </span>
-              </span>
-              <span className="shrink-0 text-right">
-                <span className={`num block text-sm font-semibold ${income ? 'text-income' : 'text-expense'}`}>
-                  {income ? '+' : '−'}
-                  {money(tx.amount)}
-                </span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400">{day.format(new Date(tx.date + 'T00:00'))}</span>
-              </span>
-            </button>
-          </li>
-        )
-      })}
-    </ul>
   )
 }

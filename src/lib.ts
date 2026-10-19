@@ -11,8 +11,36 @@ export function parseAmount(input: string): number | null {
   return v > 0 ? v : null
 }
 
-/** Minor units -> editable string ("4700", "12.5"). */
-export const toInput = (minor: number) => String(minor / 100)
+/** Minor units -> editable string ("4 700", "12.5"). */
+export const toInput = (minor: number) => groupAmount(String(minor / 100))
+
+const symbolOf = (code: string, locale: string) =>
+  new Intl.NumberFormat(locale, { style: 'currency', currency: code, currencyDisplay: 'narrowSymbol' }).formatToParts(0).find((p) => p.type === 'currency')?.value
+
+const symbols = new Map<string, string>()
+
+/**
+ * Shortest recognisable symbol for a currency (Ft, €, zł), from Unicode CLDR data only: the UI locale first,
+ * then the currency's home locale (ISO 4217 codes start with the country). No CLDR symbol -> the ISO code, as banks show it.
+ */
+export function currencySymbol(code: string, locale: string) {
+  const key = `${code}|${locale}`
+  let sym = symbols.get(key)
+  if (sym === undefined) {
+    sym = symbolOf(code, locale)
+    if (!sym || sym === code) {
+      let home: string | undefined
+      try {
+        home = symbolOf(code, new Intl.Locale('und', { region: code.slice(0, 2) }).maximize().toString())
+      } catch {
+        // not a country prefix (e.g. XAU, EUR) -> skip
+      }
+      sym = home || code
+    }
+    symbols.set(key, sym)
+  }
+  return sym
+}
 
 export function formatMoney(minor: number, currency: string, locale: string, compact = false) {
   const fraction = minor % 100 !== 0 && !compact ? 2 : 0
@@ -22,7 +50,10 @@ export function formatMoney(minor: number, currency: string, locale: string, com
     notation: compact ? 'compact' : 'standard',
     minimumFractionDigits: fraction,
     maximumFractionDigits: compact ? 1 : fraction,
-  }).format(minor / 100)
+  })
+    .formatToParts(minor / 100)
+    .map((p) => (p.type === 'currency' ? currencySymbol(currency, locale) : p.value))
+    .join('')
 }
 
 // --- Dates ----------------------------------------------------------------
@@ -106,4 +137,126 @@ export function ranked(byCategory: Map<number, number>, ids: Set<number>, total:
     .filter(([id]) => ids.has(id))
     .map(([id, amount]) => ({ id, amount, share: total ? amount / total : 0 }))
     .sort((a, b) => b.amount - a.amount)
+}
+
+// --- Amount tint ----------------------------------------------------------
+
+/** Average income over the months that had any, so one missing payday does not skew it. */
+export function avgMonthlyIncome(txs: Tx[]) {
+  const months = new Set<string>()
+  let total = 0
+  for (const t of txs) {
+    if (t.kind !== 'income') continue
+    total += t.amount
+    months.add(monthOf(t.date))
+  }
+  return months.size ? total / months.size : 0
+}
+
+/**
+ * How strongly to tint an amount (0-100 %), relative to what the user earns in a month.
+ * sqrt keeps small amounts faintly visible while a full month's income saturates.
+ * No income known yet -> full tint, as there is nothing to compare against.
+ */
+export function tint(amount: number, monthlyIncome: number) {
+  if (monthlyIncome <= 0) return 100
+  return Math.round(8 + 92 * Math.min(1, Math.sqrt(amount / monthlyIncome)))
+}
+
+// --- Amount input ---------------------------------------------------------
+
+/**
+ * Typing aid: keeps digits and one decimal separator, groups the whole part by thousands with spaces
+ * ("100000000" -> "100 000 000"). Extra decimals are kept so parseAmount can reject them instead of
+ * silently truncating "1.000" to 1.
+ */
+export function groupAmount(raw: string) {
+  const s = raw.replace(/[^\d.,]/g, '')
+  const i = s.search(/[.,]/)
+  const whole = (i < 0 ? s : s.slice(0, i)).replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return i < 0 ? whole : `${whole || '0'}${s[i]}${s.slice(i + 1).replace(/[.,]/g, '')}`
+}
+
+// --- Colour ---------------------------------------------------------------
+
+/** h 0-360, s and v 0-1 -> "#rrggbb". */
+export function hsvToHex(h: number, s: number, v: number) {
+  const f = (n: number) => {
+    const k = (n + h / 60) % 6
+    return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255)
+  }
+  return '#' + [f(5), f(3), f(1)].map((x) => x.toString(16).padStart(2, '0')).join('')
+}
+
+/** "#rrggbb" -> [h, s, v]. Null if not a 6-digit hex colour. */
+export function hexToHsv(hex: string): [number, number, number] | null {
+  const m = /^#?([\da-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255)
+  const max = Math.max(r, g, b)
+  const d = max - Math.min(r, g, b)
+  const h = !d ? 0 : max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return [(h * 60 + 360) % 360, max ? d / max : 0, max]
+}
+
+// --- Transaction search ---------------------------------------------------
+
+export type TxSort = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'category' | 'note'
+
+export interface TxQuery {
+  text: string
+  kind: 'all' | Tx['kind']
+  buckets: Bucket[] // empty = any
+  categories: number[] // empty = any
+  min: number | null // minor units
+  max: number | null
+  from: string // YYYY-MM-DD, '' = open
+  to: string
+  sort: TxSort
+}
+
+export const EMPTY_QUERY: TxQuery = { text: '', kind: 'all', buckets: [], categories: [], min: null, max: null, from: '', to: '', sort: 'date-desc' }
+
+/** Number of active filters (search text and sort excluded). */
+export const filterCount = (q: TxQuery) =>
+  [q.kind !== 'all', q.buckets.length, q.categories.length, q.min !== null, q.max !== null, q.from, q.to].filter(Boolean).length
+
+/** Lowercase, accents stripped: "Kávé" matches "kave". */
+const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+/**
+ * Filters and sorts transactions. Text matches the note, the category name, or the amount
+ * ("4700", "4 700" and "4700,5" all find 4 700).
+ */
+export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: number) => string): Tx[] {
+  const words = fold(q.text).split(/\s+/).filter(Boolean)
+  const digits = q.text.replace(/[\s ]/g, '').replace(',', '.')
+  const isNumber = /^\d+(\.\d+)?$/.test(digits)
+  const hit = (tx: Tx) => {
+    if (!words.length) return true
+    if (isNumber && String(tx.amount / 100).startsWith(digits)) return true
+    const hay = fold(`${tx.note} ${catName(tx.categoryId)}`)
+    return words.every((w) => hay.includes(w))
+  }
+  const list = txs.filter(
+    (tx) =>
+      (q.kind === 'all' || tx.kind === q.kind) &&
+      (!q.buckets.length || (tx.bucket !== null && q.buckets.includes(tx.bucket))) &&
+      (!q.categories.length || q.categories.includes(tx.categoryId)) &&
+      (q.min === null || tx.amount >= q.min) &&
+      (q.max === null || tx.amount <= q.max) &&
+      (!q.from || tx.date >= q.from) &&
+      (!q.to || tx.date <= q.to) &&
+      hit(tx),
+  )
+  const byDate = (a: Tx, b: Tx) => b.date.localeCompare(a.date) || b.id - a.id
+  const sorts: Record<TxSort, (a: Tx, b: Tx) => number> = {
+    'date-desc': byDate,
+    'date-asc': (a, b) => -byDate(a, b),
+    'amount-desc': (a, b) => b.amount - a.amount || byDate(a, b),
+    'amount-asc': (a, b) => a.amount - b.amount || byDate(a, b),
+    category: (a, b) => catName(a.categoryId).localeCompare(catName(b.categoryId)) || byDate(a, b),
+    note: (a, b) => (a.note || catName(a.categoryId)).localeCompare(b.note || catName(b.categoryId)) || byDate(a, b),
+  }
+  return list.sort(sorts[q.sort])
 }

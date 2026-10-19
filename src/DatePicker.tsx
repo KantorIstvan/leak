@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
 import { DayPicker } from 'react-day-picker'
 import { enUS, hu } from 'react-day-picker/locale'
-import { CalendarBlank } from '@phosphor-icons/react'
+import { CalendarBlank, X } from '@phosphor-icons/react'
 import { today } from './lib'
-import { useApp } from './ui'
+import { triggerCls, useApp, usePopover } from './ui'
 
 const toDate = (iso: string) => {
   const [y, m, d] = iso.split('-').map(Number)
@@ -16,64 +15,84 @@ const chip = (on: boolean) =>
     on ? 'bg-accent text-accent-fg' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
   }`
 
-/** Date field: a button showing the date, quick Today/Yesterday chips, and a calendar popover that floats over the content below. */
-export function DatePicker({ label, value, onChange }: { label: string; value: string; onChange: (iso: string) => void }) {
+/**
+ * Date field: a button showing the date, quick Today/Yesterday chips, and a calendar popover that floats over the content below.
+ * With a placeholder it is optional: it may be empty, shows a clear button and drops the quick chips.
+ */
+export function DatePicker({
+  label,
+  value,
+  onChange,
+  placeholder,
+  defaultMonth,
+  align = 'left',
+}: {
+  label: string
+  value: string
+  onChange: (iso: string) => void
+  placeholder?: string
+  defaultMonth?: string // YYYY-MM-DD shown when the field is empty
+  align?: 'left' | 'right'
+}) {
   const { t, s } = useApp()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  // Close on outside click.
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false)
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [open])
-  const selected = toDate(value)
+  const { open, setOpen, ref, onKeyDown } = usePopover()
+  const selected = value ? toDate(value) : undefined
   const now = new Date()
   const yesterday = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  const quick = placeholder === undefined
 
   return (
-    <div
-      ref={ref}
-      className="relative grid gap-2"
-      onKeyDown={(e) => {
-        // Esc closes the calendar only, not the surrounding dialog.
-        if (e.key === 'Escape' && open) {
-          e.preventDefault()
-          e.stopPropagation()
-          setOpen(false)
-        }
-      }}
-    >
+    <div ref={ref} className="relative grid gap-2" onKeyDown={onKeyDown}>
       <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-          className="flex h-11 flex-1 items-center gap-2 rounded-lg bg-white px-3 text-left text-base ring-1 ring-zinc-300 transition hover:ring-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:text-sm dark:bg-zinc-950 dark:ring-zinc-700 dark:hover:ring-zinc-500"
-        >
-          <CalendarBlank size={18} className="shrink-0 text-zinc-500" />
-          <span className="truncate first-letter:uppercase">
-            {new Intl.DateTimeFormat(t.locale, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(selected)}
-          </span>
-        </button>
-        <button type="button" className={chip(value === today())} onClick={() => onChange(today())}>
-          {t.today}
-        </button>
-        <button type="button" className={chip(value === yesterday)} onClick={() => onChange(yesterday)}>
-          {t.yesterday}
-        </button>
+        <div className="relative min-w-0 flex-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+            className={`${triggerCls} w-full text-base sm:text-sm ${quick ? 'h-11' : 'h-10 pr-9'}`}
+          >
+            <CalendarBlank size={18} className="shrink-0 text-zinc-500" />
+            <span className={`truncate first-letter:uppercase ${selected ? '' : 'text-zinc-500'}`}>
+              {selected
+                ? new Intl.DateTimeFormat(t.locale, quick ? { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' } : { month: 'short', day: 'numeric' }).format(selected)
+                : placeholder}
+            </span>
+          </button>
+          {!quick && value && (
+            <button
+              type="button"
+              aria-label={t.clear}
+              onClick={() => onChange('')}
+              className="absolute top-1/2 right-1.5 grid size-7 -translate-y-1/2 place-items-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            >
+              <X size={14} weight="bold" />
+            </button>
+          )}
+        </div>
+        {quick && (
+          <>
+            <button type="button" className={chip(value === today())} onClick={() => onChange(today())}>
+              {t.today}
+            </button>
+            <button type="button" className={chip(value === yesterday)} onClick={() => onChange(yesterday)}>
+              {t.yesterday}
+            </button>
+          </>
+        )}
       </div>
 
       {open && (
-        <div className="absolute inset-x-0 top-full z-20 mt-2 rounded-xl bg-white p-3 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 sm:right-auto sm:w-80 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700">
+        <div
+          className={`absolute top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-3 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700 ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
+        >
           <DayPicker
             mode="single"
             required
             selected={selected}
-            defaultMonth={selected}
+            defaultMonth={selected ?? (defaultMonth ? toDate(defaultMonth) : undefined)}
             onSelect={(d) => {
               onChange(toIso(d))
               setOpen(false)

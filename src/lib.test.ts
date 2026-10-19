@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
-import { byMonth, dueDates, formatMoney, parseAmount, plan, shiftMonth, summarize } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, parseAmount, plan, queryTxs, shiftMonth, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: 0, date: '2026-08-01', amount: 0, kind: 'expense', categoryId: 1, bucket: 'needs', note: '', ...p })
 
@@ -74,5 +74,90 @@ describe('byMonth', () => {
     expect(m).toHaveLength(12)
     expect(m[2].expense).toBe(100)
     expect(m[0].expense).toBe(0)
+  })
+})
+
+describe('tint', () => {
+  it('scales with the share of monthly income', () => {
+    expect(tint(100000, 100000000)).toBeLessThan(12) // 1 000 of 1 000 000: barely tinted
+    expect(tint(70000000, 100000000)).toBeGreaterThan(80) // 700k of 1M: strong
+    expect(tint(70000000, 1000000000)).toBeLessThan(tint(70000000, 100000000)) // richer user, weaker tint
+    expect(tint(200000000, 100000000)).toBe(100)
+    expect(tint(500, 0)).toBe(100)
+  })
+})
+
+describe('avgMonthlyIncome', () => {
+  it('averages over months that had income', () => {
+    const txs = [
+      tx({ kind: 'income', amount: 100, date: '2026-01-05' }),
+      tx({ kind: 'income', amount: 300, date: '2026-03-05' }),
+      tx({ kind: 'expense', amount: 999, date: '2026-02-05' }),
+    ]
+    expect(avgMonthlyIncome(txs)).toBe(200)
+  })
+})
+
+describe('groupAmount', () => {
+  it('groups thousands with spaces while typing', () => {
+    expect(groupAmount('100000000')).toBe('100 000 000')
+    expect(groupAmount('4 70')).toBe('470')
+    expect(groupAmount('12345,5')).toBe('12 345,5')
+    expect(groupAmount(',5')).toBe('0,5')
+    expect(groupAmount('007')).toBe('7')
+    expect(groupAmount('abc')).toBe('')
+  })
+  it('keeps extra decimals so parseAmount still rejects them', () => {
+    expect(groupAmount('1.000')).toBe('1.000')
+    expect(parseAmount(groupAmount('1.000'))).toBeNull()
+    expect(parseAmount(groupAmount('1234567,89'))).toBe(123456789)
+  })
+})
+
+describe('hsv <-> hex', () => {
+  it('round-trips', () => {
+    for (const hex of ['#3b82f6', '#e11d48', '#000000', '#ffffff', '#65a30d']) expect(hsvToHex(...hexToHsv(hex)!)).toBe(hex)
+    expect(hsvToHex(0, 1, 1)).toBe('#ff0000')
+    expect(hexToHsv('nope')).toBeNull()
+  })
+})
+
+describe('queryTxs', () => {
+  const names: Record<number, string> = { 1: 'Kávézó', 2: 'Rent', 3: 'Job' }
+  const name = (id: number) => names[id]
+  const txs = [
+    tx({ id: 1, date: '2026-08-03', amount: 470000, categoryId: 1, bucket: 'wants', note: 'Espresso' }),
+    tx({ id: 2, date: '2026-08-01', amount: 15000000, categoryId: 2, bucket: 'needs' }),
+    tx({ id: 3, date: '2026-08-05', amount: 46000000, kind: 'income', categoryId: 3, bucket: null, note: 'Salary' }),
+  ]
+  const ids = (q: Partial<TxQuery>) => queryTxs(txs, { ...EMPTY_QUERY, ...q }, name).map((t) => t.id)
+
+  it('searches note, accent-folded category and amount', () => {
+    expect(ids({ text: 'kavezo' })).toEqual([1])
+    expect(ids({ text: 'salary' })).toEqual([3])
+    expect(ids({ text: '4 700' })).toEqual([1])
+    expect(ids({ text: '150000' })).toEqual([2])
+  })
+  it('filters', () => {
+    expect(ids({ kind: 'income' })).toEqual([3])
+    expect(ids({ buckets: ['needs', 'wants'] })).toEqual([1, 2])
+    expect(ids({ categories: [2] })).toEqual([2])
+    expect(ids({ min: 1000000, max: 20000000 })).toEqual([2])
+    expect(ids({ from: '2026-08-02', to: '2026-08-04' })).toEqual([1])
+  })
+  it('sorts', () => {
+    expect(ids({})).toEqual([3, 1, 2])
+    expect(ids({ sort: 'date-asc' })).toEqual([2, 1, 3])
+    expect(ids({ sort: 'amount-desc' })).toEqual([3, 2, 1])
+    expect(ids({ sort: 'category' })).toEqual([3, 1, 2])
+  })
+})
+
+describe('currencySymbol', () => {
+  it('uses CLDR symbols from the UI or home locale, else the ISO code', () => {
+    expect(currencySymbol('HUF', 'hu-HU')).toBe('Ft')
+    expect(currencySymbol('PLN', 'en-US')).toBe('zł')
+    expect(currencySymbol('CHF', 'hu-HU')).toBe('CHF')
+    expect(currencySymbol('XDR', 'hu-HU')).toBe('XDR')
   })
 })

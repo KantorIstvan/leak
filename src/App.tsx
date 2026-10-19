@@ -64,7 +64,9 @@ export default function App() {
     return () => removeEventListener('focus', syncSubs)
   }, [])
   useEffect(() => {
-    if (settings) document.documentElement.lang = settings.lang
+    if (!settings) return
+    document.documentElement.lang = settings.lang
+    document.documentElement.toggleAttribute('data-colorblind', !!settings.colorblind)
   }, [settings])
 
   const ctx = useMemo<AppCtx | null>(() => {

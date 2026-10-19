@@ -27,6 +27,7 @@
   --accent-strong: #3f3f46;
   --accent-fg: #fafafa;
   --surface: #fafaf9;
+  --card: #ffffff;
   --chart-grid: #e4e4e7;
   --chart-ink: #71717a;
 }
@@ -37,8 +38,31 @@
   --accent-strong: #d4d4d8;
   --accent-fg: #18181b;
   --surface: #18181b;
+  --card: #18181b;
   --chart-grid: #27272a;
   --chart-ink: #a1a1aa;
+}
+
+/* Colour-blind mode, one palette per theme. Colours that share a view (income/expense/investments,
+   needs/wants/investments) stay apart under protan, deutan and tritan simulation and also differ in
+   lightness alone, for monochromacy. palette.test.ts checks this. Expense is hatched as well, so it
+   never depends on colour alone. */
+:root[data-colorblind] {
+  --color-income: #103dc2;
+  --color-expense: #b8421c;
+  --color-investments: #3d077f;
+  --color-needs: #483fbc;
+  --color-wants: #d97f00;
+}
+:root.dark[data-colorblind] {
+  --color-income: #6f9cdc;
+  --color-expense: #efa68a;
+  --color-investments: #ebcdff;
+  --color-needs: #5a76bf;
+  --color-wants: #e9ac65;
+}
+:root[data-colorblind] .bg-expense {
+  background-image: repeating-linear-gradient(135deg, transparent 0 2px, var(--card) 2px 3.5px);
 }
 
 body {
@@ -69,4 +93,26 @@ dialog.sheet::backdrop {
 
 .num {
   font-variant-numeric: tabular-nums;
+}
+
+/* Thin themed scrollbars instead of the OS ones. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--chart-grid) transparent;
+}
+
+/* Small styled tooltip for icon-only buttons (replaces the OS title tooltip). */
+[data-tip] {
+  position: relative;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  @apply pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium whitespace-nowrap text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900;
+  animation: tip-in 120ms 400ms both;
+}
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
 }

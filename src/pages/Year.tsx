@@ -5,7 +5,7 @@ import { byMonth, ranked, summarize, type Summary } from '../lib'
 import { Card, CategoryBars, Empty, PageHeader, PeriodNav, Stat, useApp } from '../ui'
 
 export function YearPage({ year, setYear, openMonth }: { year: number; setYear: (y: number) => void; openMonth: (m: string) => void }) {
-  const { t, money, cats } = useApp()
+  const { t, s, money, cats } = useApp()
   const txs = useLiveQuery(() => db.txs.where('date').between(`${year}-01-01`, `${year}-12-31`, true, true).toArray(), [year])
 
   const header = (
@@ -88,7 +88,14 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
                 }
               />
               <Bar dataKey="income" fill="var(--color-income)" radius={[4, 4, 0, 0]} className="cursor-pointer" />
-              <Bar dataKey="expense" fill="var(--color-expense)" radius={[4, 4, 0, 0]} className="cursor-pointer" />
+              {/* Same hatch as .bg-expense in colour-blind mode, so the two bars differ by more than colour. */}
+              <defs>
+                <pattern id="expense-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                  <rect width="5" height="5" fill="var(--color-expense)" />
+                  <rect width="1.5" height="5" fill="var(--card)" />
+                </pattern>
+              </defs>
+              <Bar dataKey="expense" fill={s.colorblind ? 'url(#expense-hatch)' : 'var(--color-expense)'} radius={[4, 4, 0, 0]} className="cursor-pointer" />
             </BarChart>
           </ResponsiveContainer>
         </div>
