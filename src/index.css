@@ -1,0 +1,72 @@
+@import 'tailwindcss';
+
+/* Theme is driven by a `dark` class on <html> (set from Settings, "system" follows the OS). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+
+  /* Data colors, validated for colour-blind separation in light and dark. */
+  --color-income: #0d9488;
+  --color-expense: #e11d48;
+  --color-needs: #3b82f6;
+  --color-wants: #d97706;
+  --color-investments: #8b5cf6;
+}
+
+/* Brand is monochrome: near-black in light mode, near-white in dark mode. */
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-fg: var(--accent-fg);
+}
+
+:root {
+  color-scheme: light;
+  --accent: #18181b;
+  --accent-strong: #3f3f46;
+  --accent-fg: #fafafa;
+  --surface: #fafaf9;
+  --chart-grid: #e4e4e7;
+  --chart-ink: #71717a;
+}
+
+.dark {
+  color-scheme: dark;
+  --accent: #fafafa;
+  --accent-strong: #d4d4d8;
+  --accent-fg: #18181b;
+  --surface: #18181b;
+  --chart-grid: #27272a;
+  --chart-ink: #a1a1aa;
+}
+
+body {
+  @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  font-feature-settings: 'ss01';
+}
+
+/* Native <dialog> as bottom sheet on phones, centred card on larger screens. */
+dialog.sheet {
+  @apply m-0 mt-auto w-full max-w-none rounded-t-2xl bg-white p-0 text-zinc-900 shadow-2xl sm:m-auto sm:max-w-lg sm:rounded-2xl dark:bg-zinc-900 dark:text-zinc-100;
+  max-height: calc(100dvh - 2rem);
+}
+dialog.sheet::backdrop {
+  @apply bg-zinc-950/40 backdrop-blur-[2px];
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog.sheet[open] {
+    animation: sheet-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+  }
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
