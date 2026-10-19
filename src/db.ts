@@ -13,6 +13,7 @@ export interface Category {
   color: string
   kind: Kind
   bucket: Bucket // default bucket for new expenses in this category
+  icon?: string // name from ICONS; missing on categories made before icons existed
 }
 
 export interface Tx {
@@ -23,6 +24,7 @@ export interface Tx {
   categoryId: number
   bucket: Bucket | null // null for income
   note: string
+  createdAt?: number // ms epoch when logged; missing on txs made before this existed
 }
 
 export interface Goal {
@@ -37,6 +39,7 @@ export interface Sub {
   name: string
   amount: number // minor units, charged monthly
   categoryId: number
+  bucket?: Bucket // missing on subscriptions made before it existed: the category's default applies
   day: number // 1-31, clamped to month length
   lastMonth: string // YYYY-MM of the last generated charge
 }
@@ -46,6 +49,8 @@ export interface Settings {
   lang: Lang
   currency: string
   theme: Theme
+  clock?: '12' | '24' // missing on settings made before this existed: treated as 24
+  colorblind?: boolean // swaps the data palette for one safe for protan/deutan/tritan vision and monochromacy, hatches expenses
   ratios: Record<Bucket, number> // percentages, sum to 100
 }
 
@@ -56,40 +61,41 @@ export const DEFAULT_SETTINGS: Settings = {
   lang: huUser ? 'hu' : 'en',
   currency: huUser ? 'HUF' : 'EUR',
   theme: 'system',
+  clock: huUser ? '24' : '12',
   ratios: { needs: 50, wants: 30, investments: 20 },
 }
 
 type NewCategory = Omit<Category, 'id'>
 
-const expense = (name: string, color: string, bucket: Bucket): NewCategory => ({ name, color, kind: 'expense', bucket })
-const income = (name: string, color: string): NewCategory => ({ name, color, kind: 'income', bucket: 'needs' })
+const expense = (name: string, color: string, bucket: Bucket, icon: string): NewCategory => ({ name, color, kind: 'expense', bucket, icon })
+const income = (name: string, color: string, icon: string): NewCategory => ({ name, color, kind: 'income', bucket: 'needs', icon })
 
 export const DEFAULT_CATEGORIES: NewCategory[] = [
-  expense('Food', '#f59e0b', 'needs'),
-  expense('Rent', '#64748b', 'needs'),
-  expense('Internet', '#db2777', 'needs'),
-  expense('Transport', '#0891b2', 'needs'),
-  expense('Health', '#16a34a', 'needs'),
-  expense('Clothes', '#c026d3', 'needs'),
-  expense('Gift', '#ca8a04', 'needs'),
-  expense('Relationship', '#e11d48', 'needs'),
-  expense('Software', '#7c3aed', 'needs'),
-  expense('Service', '#059669', 'needs'),
-  expense('Education', '#2563eb', 'needs'),
-  expense('Tech', '#3b82f6', 'wants'),
-  expense('Game', '#4f46e5', 'wants'),
-  expense('Travel', '#0ea5e9', 'wants'),
-  expense('Junk Food', '#ea580c', 'wants'),
-  expense('Dining out', '#d97706', 'wants'),
-  expense('Entertainment', '#0d9488', 'wants'),
-  expense('Streaming', '#dc2626', 'wants'),
-  expense('Alcohol', '#be123c', 'wants'),
-  expense('Cigarette/Vape', '#57534e', 'wants'),
-  expense('Investment', '#8b5cf6', 'investments'),
-  income('Job', '#65a30d'),
-  income('Family', '#16a34a'),
-  income('Sold investments', '#0d9488'),
-  income('Friends', '#84cc16'),
+  expense('Food', '#f59e0b', 'needs', 'ForkKnife'),
+  expense('Rent', '#64748b', 'needs', 'House'),
+  expense('Internet', '#db2777', 'needs', 'WifiHigh'),
+  expense('Transport', '#0891b2', 'needs', 'Bus'),
+  expense('Health', '#16a34a', 'needs', 'FirstAid'),
+  expense('Clothes', '#c026d3', 'needs', 'TShirt'),
+  expense('Gift', '#ca8a04', 'needs', 'Gift'),
+  expense('Relationship', '#e11d48', 'needs', 'Heart'),
+  expense('Software', '#7c3aed', 'needs', 'Code'),
+  expense('Service', '#059669', 'needs', 'Wrench'),
+  expense('Education', '#2563eb', 'needs', 'GraduationCap'),
+  expense('Tech', '#3b82f6', 'wants', 'Laptop'),
+  expense('Game', '#4f46e5', 'wants', 'GameController'),
+  expense('Travel', '#0ea5e9', 'wants', 'Airplane'),
+  expense('Junk Food', '#ea580c', 'wants', 'Hamburger'),
+  expense('Dining out', '#d97706', 'wants', 'BowlFood'),
+  expense('Entertainment', '#0d9488', 'wants', 'FilmSlate'),
+  expense('Streaming', '#dc2626', 'wants', 'Television'),
+  expense('Alcohol', '#be123c', 'wants', 'BeerStein'),
+  expense('Cigarette/Vape', '#57534e', 'wants', 'Cigarette'),
+  expense('Investment', '#8b5cf6', 'investments', 'ChartLineUp'),
+  income('Job', '#65a30d', 'Briefcase'),
+  income('Family', '#16a34a', 'Users'),
+  income('Sold investments', '#0d9488', 'TrendUp'),
+  income('Friends', '#84cc16', 'HandHeart'),
 ]
 
 export const db = new Dexie('leak') as Dexie & {
@@ -107,6 +113,19 @@ db.version(1).stores({
   settings: 'id',
 })
 db.version(2).stores({ subs: '++id, categoryId' })
+db.version(3).stores({}).upgrade((tx) =>
+  tx
+    .table('categories')
+    .toCollection()
+    .modify((c: Category) => {
+      c.icon ??= DEFAULT_CATEGORIES.find((d) => d.name === c.name)?.icon
+    }),
+)
+
+// Stamp every new tx (form, subscriptions, demo); imported ones keep theirs.
+db.txs.hook('creating', (_, tx) => {
+  tx.createdAt ??= Date.now()
+})
 
 db.on('populate', async (tx) => {
   await tx.table('categories').bulkAdd(DEFAULT_CATEGORIES)

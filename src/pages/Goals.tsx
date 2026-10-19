@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
 import { db, type Goal } from '../db'
 import { byMonth, parseAmount, summarize, toInput } from '../lib'
-import { Button, ConfirmButton, Empty, Field, inputCls, PageHeader, Sheet, useApp } from '../ui'
+import { Button, ConfirmButton, Empty, Field, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
 
 export function GoalsPage() {
   const { t, money } = useApp()
@@ -95,10 +95,10 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={t.target} error={errors.target}>
-          <input className={`${inputCls} num`} inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} />
+          <MoneyInput value={target} onChange={setTarget} />
         </Field>
         <Field label={t.saved} error={errors.saved}>
-          <input className={`${inputCls} num`} inputMode="decimal" value={saved} onChange={(e) => setSaved(e.target.value)} />
+          <MoneyInput value={saved} onChange={setSaved} />
         </Field>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
