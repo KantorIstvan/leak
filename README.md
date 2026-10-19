@@ -14,6 +14,26 @@ Desktop app (Windows, macOS, Linux) built with Tauri. Works on small screens too
 - Any display currency, Hungarian and English UI, light and dark mode
 - JSON backup export and import
 
+## Install
+
+Download the installer for your system from the [latest release](https://github.com/KantorIstvan/leak/releases/latest).
+
+| System | File |
+|---|---|
+| Windows | `Leak_x.y.z_x64-setup.exe` |
+| macOS, Apple Silicon (M1 or newer) | `Leak_x.y.z_aarch64.dmg` |
+| macOS, Intel | `Leak_x.y.z_x64.dmg` |
+| Linux | `.AppImage` (any distro), `.deb` (Debian/Ubuntu), `.rpm` (Fedora) |
+
+The app is not code-signed yet, so the first launch needs one extra step:
+
+- **Windows:** on the "Windows protected your PC" screen click **More info**, then **Run anyway**.
+- **macOS:** open the `.dmg` and drag Leak to Applications. On first launch macOS blocks it; go to
+  **System Settings > Privacy & Security**, scroll down and click **Open Anyway**.
+- **Linux (AppImage):** make it executable with `chmod +x Leak_*.AppImage`, then run it.
+
+Your data is stored locally for your user account and is kept when you update or reinstall.
+
 ## Tech stack
 
 | Layer | Choice |
@@ -38,6 +58,9 @@ npm run tauri dev    # desktop app
 npm run tauri build  # installer in src-tauri/target/release/bundle
 npm test             # unit tests
 ```
+
+To publish a release, bump the version in `package.json` and `src-tauri/tauri.conf.json`, then push a tag:
+`git tag v0.1.1 && git push origin v0.1.1`. GitHub Actions builds every platform and creates a draft release.
 
 Open `http://localhost:5173/?demo` in dev mode to fill an empty database with a sample year.
 
