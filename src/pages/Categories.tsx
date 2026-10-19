@@ -79,7 +79,8 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
   }
 
   async function remove() {
-    const used = await db.txs.where('categoryId').equals(existing!.id).count()
+    const used =
+      (await db.txs.where('categoryId').equals(existing!.id).count()) + (await db.subs.where('categoryId').equals(existing!.id).count())
     if (used) return setError(t.categoryInUse(used))
     await db.categories.delete(existing!.id)
     onDone()

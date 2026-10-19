@@ -32,6 +32,15 @@ export interface Goal {
   saved: number // minor units
 }
 
+export interface Sub {
+  id: number
+  name: string
+  amount: number // minor units, charged monthly
+  categoryId: number
+  day: number // 1-31, clamped to month length
+  lastMonth: string // YYYY-MM of the last generated charge
+}
+
 export interface Settings {
   id: 'app'
   lang: Lang
@@ -87,6 +96,7 @@ export const db = new Dexie('leak') as Dexie & {
   txs: EntityTable<Tx, 'id'>
   categories: EntityTable<Category, 'id'>
   goals: EntityTable<Goal, 'id'>
+  subs: EntityTable<Sub, 'id'>
   settings: EntityTable<Settings, 'id'>
 }
 
@@ -96,6 +106,7 @@ db.version(1).stores({
   goals: '++id',
   settings: 'id',
 })
+db.version(2).stores({ subs: '++id, categoryId' })
 
 db.on('populate', async (tx) => {
   await tx.table('categories').bulkAdd(DEFAULT_CATEGORIES)
@@ -110,17 +121,19 @@ interface Backup {
   txs: Tx[]
   categories: Category[]
   goals: Goal[]
+  subs?: Sub[] // missing in backups made before subscriptions existed
   settings: Settings[]
 }
 
 export async function exportBackup(): Promise<Backup> {
-  const [txs, categories, goals, settings] = await Promise.all([
+  const [txs, categories, goals, subs, settings] = await Promise.all([
     db.txs.toArray(),
     db.categories.toArray(),
     db.goals.toArray(),
+    db.subs.toArray(),
     db.settings.toArray(),
   ])
-  return { app: 'leak', version: 1, txs, categories, goals, settings }
+  return { app: 'leak', version: 1, txs, categories, goals, subs, settings }
 }
 
 // Replaces all data. Throws if the file is not a Leak backup, before touching anything.
@@ -133,11 +146,12 @@ export async function importBackup(raw: unknown) {
     b.txs!.every((t) => Number.isInteger(t.amount) && /^\d{4}-\d{2}-\d{2}$/.test(t.date))
   if (!ok) throw new Error('invalid backup')
 
-  await db.transaction('rw', [db.txs, db.categories, db.goals, db.settings], async () => {
-    await Promise.all([db.txs.clear(), db.categories.clear(), db.goals.clear(), db.settings.clear()])
+  await db.transaction('rw', [db.txs, db.categories, db.goals, db.subs, db.settings], async () => {
+    await Promise.all([db.txs.clear(), db.categories.clear(), db.goals.clear(), db.subs.clear(), db.settings.clear()])
     await db.categories.bulkAdd(b.categories!)
     await db.txs.bulkAdd(b.txs!)
     await db.goals.bulkAdd(b.goals!)
+    await db.subs.bulkAdd(Array.isArray(b.subs) ? b.subs : [])
     await db.settings.bulkAdd(b.settings!.length ? b.settings! : [DEFAULT_SETTINGS])
   })
 }

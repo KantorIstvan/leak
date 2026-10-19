@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
-import { byMonth, formatMoney, parseAmount, plan, shiftMonth, summarize } from './lib'
+import { byMonth, dueDates, formatMoney, parseAmount, plan, shiftMonth, summarize } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: 0, date: '2026-08-01', amount: 0, kind: 'expense', categoryId: 1, bucket: 'needs', note: '', ...p })
 
@@ -19,6 +19,13 @@ describe('formatMoney', () => {
   it('hides fillér when whole', () => {
     expect(formatMoney(46000000, 'HUF', 'hu-HU').replace(/\s/g, ' ')).toBe('460 000 Ft')
     expect(formatMoney(1250, 'EUR', 'en-US')).toBe('€12.50')
+  })
+})
+
+describe('dueDates', () => {
+  it('fills every missed month and clamps the day', () => {
+    expect(dueDates('2025-12', '2026-02', 31)).toEqual(['2026-01-31', '2026-02-28'])
+    expect(dueDates('2026-02', '2026-02', 5)).toEqual([])
   })
 })
 

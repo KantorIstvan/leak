@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { CalendarBlank, ChartBar, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { ArrowsClockwise, CalendarBlank, ChartBar, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
 import { formatMoney, monthOf, today } from './lib'
@@ -11,11 +11,14 @@ import { YearPage } from './pages/Year'
 import { GoalsPage } from './pages/Goals'
 import { CategoriesPage } from './pages/Categories'
 import { SettingsPage } from './pages/Settings'
+import { Updater } from './Updater'
+import { SubsPage, syncSubs } from './pages/Subs'
 
-type Page = 'month' | 'year' | 'goals' | 'categories' | 'settings'
+type Page = 'month' | 'year' | 'subs' | 'goals' | 'categories' | 'settings'
 const NAV: { id: Page; icon: Icon }[] = [
   { id: 'month', icon: CalendarBlank },
   { id: 'year', icon: ChartBar },
+  { id: 'subs', icon: ArrowsClockwise },
   { id: 'goals', icon: Target },
   { id: 'categories', icon: Tag },
   { id: 'settings', icon: GearSix },
@@ -54,6 +57,12 @@ export default function App() {
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
   useTheme(settings?.theme)
+  // Charge subscriptions on start, and on focus in case the app stayed open into a new month.
+  useEffect(() => {
+    syncSubs()
+    addEventListener('focus', syncSubs)
+    return () => removeEventListener('focus', syncSubs)
+  }, [])
   useEffect(() => {
     if (settings) document.documentElement.lang = settings.lang
   }, [settings])
@@ -119,6 +128,7 @@ export default function App() {
           <div className="mx-auto max-w-6xl">
             {page === 'month' && <MonthPage month={month} setMonth={setMonth} onAdd={add} onEdit={setEditing} />}
             {page === 'year' && <YearPage year={year} setYear={setYear} openMonth={openMonth} />}
+            {page === 'subs' && <SubsPage />}
             {page === 'goals' && <GoalsPage />}
             {page === 'categories' && <CategoriesPage />}
             {page === 'settings' && <SettingsPage />}
@@ -135,7 +145,7 @@ export default function App() {
       >
         <Plus size={24} weight="bold" />
       </button>
-      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-5 border-t border-zinc-200/80 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden dark:border-zinc-800 dark:bg-zinc-950/90">
+      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-6 border-t border-zinc-200/80 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden dark:border-zinc-800 dark:bg-zinc-950/90">
         {NAV.map(({ id, icon: I }) => (
           <button
             key={id}
@@ -155,6 +165,7 @@ export default function App() {
       <Sheet open={editing !== null} onClose={() => setEditing(null)} title={editing === 'new' ? t.addTx : t.editTx}>
         {editing && <TxForm tx={editing === 'new' ? undefined : editing} defaultDate={defaultDate} onDone={() => setEditing(null)} />}
       </Sheet>
+      <Updater />
     </Ctx.Provider>
   )
 }
