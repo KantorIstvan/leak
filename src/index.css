@@ -30,6 +30,15 @@
   --card: #ffffff;
   --chart-grid: #e4e4e7;
   --chart-ink: #71717a;
+  /* Tokens for Clerk's screens (see clerk.ts). Prefixed: Clerk uses --accent, --border, --bg and the like
+     internally, and handing it a same-named var() makes a cycle that blanks the colour. */
+  --ui-accent: var(--accent);
+  --ui-accent-fg: var(--accent-fg);
+  --ui-fg: #18181b;
+  --ui-muted: #f4f4f5;
+  --ui-muted-fg: #52525b;
+  --ui-line: #e4e4e7;
+  --ui-field: #ffffff;
 }
 
 .dark {
@@ -41,6 +50,11 @@
   --card: #18181b;
   --chart-grid: #27272a;
   --chart-ink: #a1a1aa;
+  --ui-fg: #f4f4f5;
+  --ui-muted: #27272a;
+  --ui-muted-fg: #a1a1aa;
+  --ui-line: #3f3f46;
+  --ui-field: #09090b;
 }
 
 /* Colour-blind mode, one palette per theme. Colours that share a view (income/expense/investments,
@@ -79,14 +93,71 @@ dialog.sheet::backdrop {
   @apply bg-zinc-950/40 backdrop-blur-[2px];
 }
 
+/* Outgoing value of <Roll>; with motion it fades out first, see .roll-out below. */
+.roll-out {
+  visibility: hidden;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   dialog.sheet[open] {
     animation: sheet-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  dialog.sheet[open]::backdrop {
+    animation: fade-in 220ms ease-out;
   }
   @keyframes sheet-in {
     from {
       transform: translateY(24px);
       opacity: 0;
+    }
+  }
+
+  /* Small entrance motions: popovers and panels drop in, content rises in, labels cross-fade. */
+  .anim-pop {
+    animation: pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top;
+  }
+  .anim-fade-up {
+    animation: fade-up 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .anim-fade {
+    animation: fade-in 200ms ease-out;
+  }
+  .anim-grow {
+    animation: grow 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .roll-in {
+    animation: fade-in 150ms ease-out;
+  }
+  .roll-out {
+    visibility: visible;
+    animation: fade-out 150ms ease-out forwards;
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes grow {
+    from {
+      transform: scaleX(0);
     }
   }
 }

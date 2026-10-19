@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, parseAmount, plan, queryTxs, shiftMonth, summarize, tint, type TxQuery } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, isDay, parseAmount, plan, queryTxs, shiftMonth, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -12,6 +12,18 @@ describe('parseAmount', () => {
   })
   it('rejects junk, zero and negatives', () => {
     for (const s of ['', 'abc', '0', '-5', '1.234', '1e3']) expect(parseAmount(s)).toBeNull()
+  })
+  it('rejects amounts too large to add up exactly', () => {
+    expect(parseAmount('100000000000')).toBe(1e13)
+    expect(parseAmount('100000000001')).toBeNull()
+    expect(parseAmount('99999999999999999999')).toBeNull()
+  })
+})
+
+describe('isDay', () => {
+  it('accepts only real calendar days', () => {
+    for (const s of ['2026-02-28', '2024-02-29', '2026-12-31']) expect(isDay(s)).toBe(true)
+    for (const s of ['2026-02-29', '2026-13-01', '2026-00-10', '0999-01-01', '2026-1-1', 20260101]) expect(isDay(s)).toBe(false)
   })
 })
 
@@ -159,5 +171,32 @@ describe('currencySymbol', () => {
     expect(currencySymbol('PLN', 'en-US')).toBe('zł')
     expect(currencySymbol('CHF', 'hu-HU')).toBe('CHF')
     expect(currencySymbol('XDR', 'hu-HU')).toBe('XDR')
+  })
+})
+
+describe('suggestNote', () => {
+  const txs = [
+    tx({ id: '1', note: 'Pizza Forte', categoryId: 'dining', date: '2026-09-10' }),
+    tx({ id: '2', note: 'Pizza Hut', categoryId: 'junk', date: '2026-08-01' }),
+    tx({ id: '3', note: 'pizza hut ', categoryId: 'junk2', date: '2026-08-20' }),
+    tx({ id: '4', note: 'Kávé', date: '2026-08-02' }),
+    tx({ id: '5', note: 'Fizetés', kind: 'income', categoryId: 'job' }),
+    tx({ id: '6', note: '' }),
+  ]
+  it('picks the most used match, with the text and category of its latest use', () => {
+    expect(suggestNote(txs, 'piz', 'expense')).toEqual({ note: 'pizza hut', categoryId: 'junk2' })
+  })
+  it('breaks ties by recency', () => {
+    expect(suggestNote([...txs, tx({ note: 'Pizza Forte', date: '2026-01-01' })], 'Piz', 'expense')?.note).toBe('Pizza Forte')
+  })
+  it('ignores case and accents', () => {
+    expect(suggestNote(txs, 'KAVE', 'expense')?.note).toBe('Kávé')
+  })
+  it('only suggests notes of the same kind', () => {
+    expect(suggestNote(txs, 'fiz', 'expense')).toBeUndefined()
+    expect(suggestNote(txs, 'fiz', 'income')?.categoryId).toBe('job')
+  })
+  it('suggests nothing for blank or unknown input', () => {
+    for (const s of ['', ' ', 'xyz']) expect(suggestNote(txs, s, 'expense')).toBeUndefined()
   })
 })

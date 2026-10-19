@@ -3,12 +3,15 @@ import { BUCKETS, type Bucket, type Tx } from './db'
 // --- Money ----------------------------------------------------------------
 // Amounts are stored as integer minor units (x100) to avoid float drift.
 
-/** "4 700", "4700,5", "12.99" -> minor units. Null if not a positive amount. */
+// 100 billion in any currency: far beyond a personal ledger, and sums of many stay exact integers.
+const MAX_AMOUNT = 1e13
+
+/** "4 700", "4700,5", "12.99" -> minor units. Null if not a positive amount (or an absurdly large one). */
 export function parseAmount(input: string): number | null {
   const s = input.replace(/[\s ]/g, '').replace(',', '.')
   if (!/^\d+(\.\d{1,2})?$/.test(s)) return null
   const v = Math.round(Number(s) * 100)
-  return v > 0 ? v : null
+  return v > 0 && v <= MAX_AMOUNT ? v : null
 }
 
 /** Minor units -> editable string ("4 700", "12.5"). */
@@ -42,15 +45,25 @@ export function currencySymbol(code: string, locale: string) {
   return sym
 }
 
+// Building a NumberFormat costs ~13x more than using one, and every rendered amount needs one.
+const formats = new Map<string, Intl.NumberFormat>()
+
 export function formatMoney(minor: number, currency: string, locale: string, compact = false) {
   const fraction = minor % 100 !== 0 && !compact ? 2 : 0
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    notation: compact ? 'compact' : 'standard',
-    minimumFractionDigits: fraction,
-    maximumFractionDigits: compact ? 1 : fraction,
-  })
+  const key = `${locale}|${currency}|${compact}|${fraction}`
+  let format = formats.get(key)
+  if (!format)
+    formats.set(
+      key,
+      (format = new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency,
+        notation: compact ? 'compact' : 'standard',
+        minimumFractionDigits: fraction,
+        maximumFractionDigits: compact ? 1 : fraction,
+      })),
+    )
+  return format
     .formatToParts(minor / 100)
     .map((p) => (p.type === 'currency' ? currencySymbol(currency, locale) : p.value))
     .join('')
@@ -66,6 +79,14 @@ export function today() {
 
 /** "2026-08" style month key. */
 export const monthOf = (date: string) => date.slice(0, 7)
+
+/** True for a YYYY-MM-DD that is a real calendar day ("2026-02-30" is not; Postgres would reject it). */
+export function isDay(s: unknown): s is string {
+  const m = typeof s === 'string' && /^([1-9]\d{3})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return false
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+  return d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3])
+}
 
 export function shiftMonth(month: string, delta: number) {
   const [y, m] = month.split('-').map(Number)
@@ -260,4 +281,27 @@ export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: string) => string)
     note: (a, b) => (a.note || catName(a.categoryId)).localeCompare(b.note || catName(b.categoryId)) || byDate(a, b),
   }
   return list.sort(sorts[q.sort])
+}
+
+/**
+ * Inline completion for the description field: the most used earlier note of this kind that
+ * starts with what was typed (ties: most recent), as last written, with the category it was last logged under.
+ */
+export function suggestNote(txs: Tx[], typed: string, kind: Tx['kind']): { note: string; categoryId: string } | undefined {
+  const q = fold(typed)
+  if (!q.trim()) return
+  const later = (a: Tx, b: Tx) => a.date.localeCompare(b.date) || (a.createdAt ?? 0) - (b.createdAt ?? 0)
+  const seen = new Map<string, { tx: Tx; n: number }>()
+  for (const tx of txs) {
+    const key = fold(tx.note.trim())
+    if (tx.kind !== kind || !key.startsWith(q)) continue
+    const s = seen.get(key)
+    if (!s) seen.set(key, { tx, n: 1 })
+    else {
+      s.n++
+      if (later(tx, s.tx) > 0) s.tx = tx
+    }
+  }
+  const best = [...seen.values()].sort((a, b) => b.n - a.n || later(b.tx, a.tx))[0]
+  return best && { note: best.tx.note.trim(), categoryId: best.tx.categoryId }
 }

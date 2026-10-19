@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
 import { db, type Tx } from '../db'
@@ -8,6 +9,14 @@ import { TxBrowser } from '../TxBrowser'
 export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; setMonth: (m: string) => void; onAdd: () => void; onEdit: (tx: Tx) => void }) {
   const { t, s, money, cats } = useApp()
   const txs = useLiveQuery(() => db.txs.where('date').between(`${month}-01`, `${month}-31`, true, true).toArray(), [month])
+  // The category hovered in the donut; the transaction list highlights its rows.
+  const [hover, setHover] = useState<string | null>(null)
+  // Memoized so a hover re-render hands the donut the same data and does not restart its animation.
+  const byCategory = useMemo(() => {
+    if (!txs) return []
+    const sum = summarize(txs)
+    return ranked(sum.byCategory, new Set(cats.filter((c) => c.kind === 'expense').map((c) => c.id)), sum.expense)
+  }, [txs, cats])
 
   const [y, m] = month.split('-').map(Number)
   const title = new Intl.DateTimeFormat(t.locale, { year: 'numeric', month: 'long' }).format(new Date(y, m - 1, 1))
@@ -29,7 +38,6 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
   const sum = summarize(txs)
   const remaining = sum.income - sum.expense
   const pct = (n: number) => (sum.income ? `${Math.round((n / sum.income) * 100)}%` : '')
-  const expenseIds = new Set(cats.filter((c) => c.kind === 'expense').map((c) => c.id))
 
   return (
     <>
@@ -84,12 +92,12 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
         </Card>
 
         <Card title={t.transactions} className="lg:col-span-3 lg:row-span-2">
-          <TxBrowser key={month} txs={txs} month={month} onAdd={onAdd} onEdit={onEdit} />
+          <TxBrowser key={month} txs={txs} month={month} onAdd={onAdd} onEdit={onEdit} highlight={hover} />
         </Card>
 
         {sum.expense > 0 && (
           <Card title={t.byCategory} className="lg:col-span-2">
-            <CategoryBars rows={ranked(sum.byCategory, expenseIds, sum.expense)} />
+            <CategoryBars rows={byCategory} active={hover} onActive={setHover} />
           </Card>
         )}
       </div>

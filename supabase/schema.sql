@@ -18,7 +18,7 @@ create table txs (
   date date not null,
   amount bigint not null check (amount >= 0), -- minor units (fillér / cents)
   kind text not null check (kind in ('income', 'expense')),
-  category_id uuid not null references categories on delete restrict, -- the app refuses to delete a used category too
+  category_id uuid not null references categories on delete restrict, -- the app moves them to "Uncategorized" before deleting a category
   bucket text check (bucket in ('needs', 'wants', 'investments')), -- null for income
   note text not null default '',
   created_at timestamptz not null default now()
