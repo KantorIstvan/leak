@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, CheckSquare, FunnelSimple, PencilSimple, Plus, SortAscending, X } from '@phosphor-icons/react'
-import { BUCKETS, db, type Bucket, type Kind, type Tx } from './db'
+import { remove, update } from './cloud'
+import { BUCKETS, type Bucket, type Kind, type Tx } from './db'
 import { DatePicker } from './DatePicker'
 import { EMPTY_QUERY, filterCount, parseAmount, queryTxs, type TxQuery, type TxSort } from './lib'
 import { ICONS } from './icons'
@@ -17,7 +18,7 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
   const [minText, setMinText] = useState('')
   const [maxText, setMaxText] = useState('')
   const [showFilters, setShowFilters] = useState(false)
-  const [selected, setSelected] = useState<Set<number> | null>(null) // null = not selecting
+  const [selected, setSelected] = useState<Set<string> | null>(null) // null = not selecting
   const [bulk, setBulk] = useState(false)
 
   const query = { ...q, min: parseAmount(minText), max: parseAmount(maxText) }
@@ -224,7 +225,7 @@ const Box = ({ on }: { on: boolean }) => (
   </span>
 )
 
-function TxList({ txs, selected, onPick }: { txs: Tx[]; selected: Set<number> | null; onPick: (tx: Tx) => void }) {
+function TxList({ txs, selected, onPick }: { txs: Tx[]; selected: Set<string> | null; onPick: (tx: Tx) => void }) {
   const { t, s, cat } = useApp()
   const monthlyIncome = useMonthlyIncome()
   const day = new Intl.DateTimeFormat(t.locale, { month: 'short', day: 'numeric' })
@@ -273,31 +274,29 @@ function BulkForm({ txs, onDone }: { txs: Tx[]; onDone: (changed: boolean) => vo
   const kinds = new Set(txs.map((tx) => tx.kind))
   const kind: Kind | null = kinds.size === 1 ? [...kinds][0] : null
   const hasExpense = kinds.has('expense')
-  const [categoryId, setCategoryId] = useState<number | null>(null)
+  const [categoryId, setCategoryId] = useState<string | null>(null)
   const [bucket, setBucket] = useState<'keep' | Bucket>('keep')
   const [moveDate, setMoveDate] = useState(false)
   const [date, setDate] = useState(txs[0].date)
   const [note, setNote] = useState('')
   const dirty = categoryId !== null || bucket !== 'keep' || moveDate || note.trim() !== ''
 
-  function pickCategory(id: number) {
+  function pickCategory(id: string) {
     setCategoryId(id)
     const c = cat.get(id)
     if (c?.kind === 'expense') setBucket(c.bucket)
   }
 
   async function save() {
-    await db.txs.bulkUpdate(
-      txs.map((tx) => ({
-        key: tx.id,
-        changes: {
-          ...(categoryId !== null && { categoryId }),
-          ...(bucket !== 'keep' && tx.kind === 'expense' && { bucket }),
-          ...(moveDate && { date }),
-          ...(note.trim() && { note: note.trim() }),
-        },
-      })),
-    )
+    const changes = {
+      ...(categoryId !== null && { categoryId }),
+      ...(moveDate && { date }),
+      ...(note.trim() && { note: note.trim() }),
+    }
+    const ids = (kind: Tx['kind']) => txs.filter((tx) => tx.kind === kind).map((tx) => tx.id)
+    // Income has no bucket, so it gets the same changes minus that one.
+    await update('txs', ids('expense'), { ...changes, ...(bucket !== 'keep' && { bucket }) })
+    await update('txs', ids('income'), changes)
     onDone(true)
   }
 
@@ -341,7 +340,7 @@ function BulkForm({ txs, onDone }: { txs: Tx[]; onDone: (changed: boolean) => vo
         <ConfirmButton
           label={t.deleteN(txs.length)}
           onConfirm={async () => {
-            await db.txs.bulkDelete(txs.map((tx) => tx.id))
+            await remove('txs', txs.map((tx) => tx.id))
             onDone(true)
           }}
         />

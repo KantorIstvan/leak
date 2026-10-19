@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
+import { add, remove, update } from '../cloud'
 import { db, type Goal } from '../db'
 import { byMonth, parseAmount, summarize, toInput } from '../lib'
 import { Button, ConfirmButton, Empty, Field, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
@@ -83,8 +84,8 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
     setErrors(errs)
     if (!name.trim() || !tgt || sv === null) return
     const data = { name: name.trim(), target: tgt, saved: sv }
-    if (goal) await db.goals.update(goal.id, data)
-    else await db.goals.add(data as Goal)
+    if (goal) await update('goals', [goal.id], data)
+    else await add('goals', [data])
     onDone()
   }
 
@@ -106,7 +107,7 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
           <ConfirmButton
             label={t.delete}
             onConfirm={async () => {
-              await db.goals.delete(goal.id)
+              await remove('goals', [goal.id])
               onDone()
             }}
           />

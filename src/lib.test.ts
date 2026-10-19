@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
 import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, parseAmount, plan, queryTxs, shiftMonth, summarize, tint, type TxQuery } from './lib'
 
-const tx = (p: Partial<Tx>): Tx => ({ id: 0, date: '2026-08-01', amount: 0, kind: 'expense', categoryId: 1, bucket: 'needs', note: '', ...p })
+const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
 describe('parseAmount', () => {
   it('accepts spaces, commas and dots', () => {
@@ -39,10 +39,10 @@ describe('shiftMonth', () => {
 describe('summarize + plan', () => {
   // The August sheet: 460 000 income, 50/30/20 -> 230 000 / 138 000 / 92 000 goals.
   const august = [
-    tx({ kind: 'income', amount: 46000000, bucket: null, categoryId: 9 }),
+    tx({ kind: 'income', amount: 46000000, bucket: null, categoryId: '9' }),
     tx({ amount: 12278000, bucket: 'needs' }),
-    tx({ amount: 10254300, bucket: 'wants', categoryId: 2 }),
-    tx({ amount: 8400000, bucket: 'investments', categoryId: 3 }),
+    tx({ amount: 10254300, bucket: 'wants', categoryId: '2' }),
+    tx({ amount: 8400000, bucket: 'investments', categoryId: '3' }),
   ]
   const s = summarize(august)
 
@@ -123,14 +123,14 @@ describe('hsv <-> hex', () => {
 })
 
 describe('queryTxs', () => {
-  const names: Record<number, string> = { 1: 'Kávézó', 2: 'Rent', 3: 'Job' }
-  const name = (id: number) => names[id]
+  const names: Record<string, string> = { 1: 'Kávézó', 2: 'Rent', 3: 'Job' }
+  const name = (id: string) => names[id]
   const txs = [
-    tx({ id: 1, date: '2026-08-03', amount: 470000, categoryId: 1, bucket: 'wants', note: 'Espresso' }),
-    tx({ id: 2, date: '2026-08-01', amount: 15000000, categoryId: 2, bucket: 'needs' }),
-    tx({ id: 3, date: '2026-08-05', amount: 46000000, kind: 'income', categoryId: 3, bucket: null, note: 'Salary' }),
+    tx({ id: '1', date: '2026-08-03', amount: 470000, categoryId: '1', bucket: 'wants', note: 'Espresso' }),
+    tx({ id: '2', date: '2026-08-01', amount: 15000000, categoryId: '2', bucket: 'needs' }),
+    tx({ id: '3', date: '2026-08-05', amount: 46000000, kind: 'income', categoryId: '3', bucket: null, note: 'Salary' }),
   ]
-  const ids = (q: Partial<TxQuery>) => queryTxs(txs, { ...EMPTY_QUERY, ...q }, name).map((t) => t.id)
+  const ids = (q: Partial<TxQuery>) => queryTxs(txs, { ...EMPTY_QUERY, ...q }, name).map((t) => Number(t.id))
 
   it('searches note, accent-folded category and amount', () => {
     expect(ids({ text: 'kavezo' })).toEqual([1])
@@ -141,7 +141,7 @@ describe('queryTxs', () => {
   it('filters', () => {
     expect(ids({ kind: 'income' })).toEqual([3])
     expect(ids({ buckets: ['needs', 'wants'] })).toEqual([1, 2])
-    expect(ids({ categories: [2] })).toEqual([2])
+    expect(ids({ categories: ['2'] })).toEqual([2])
     expect(ids({ min: 1000000, max: 20000000 })).toEqual([2])
     expect(ids({ from: '2026-08-02', to: '2026-08-04' })).toEqual([1])
   })

@@ -8,7 +8,7 @@ export type Theme = 'system' | 'light' | 'dark'
 export const BUCKETS: Bucket[] = ['needs', 'wants', 'investments']
 
 export interface Category {
-  id: number
+  id: string
   name: string
   color: string
   kind: Kind
@@ -17,28 +17,28 @@ export interface Category {
 }
 
 export interface Tx {
-  id: number
+  id: string
   date: string // YYYY-MM-DD
   amount: number // minor units (cents / fillér), always positive
   kind: Kind
-  categoryId: number
+  categoryId: string
   bucket: Bucket | null // null for income
   note: string
   createdAt?: number // ms epoch when logged; missing on txs made before this existed
 }
 
 export interface Goal {
-  id: number
+  id: string
   name: string
   target: number // minor units
   saved: number // minor units
 }
 
 export interface Sub {
-  id: number
+  id: string
   name: string
   amount: number // minor units, charged monthly
-  categoryId: number
+  categoryId: string
   bucket?: Bucket // missing on subscriptions made before it existed: the category's default applies
   day: number // 1-31, clamped to month length
   lastMonth: string // YYYY-MM of the last generated charge
@@ -98,7 +98,9 @@ export const DEFAULT_CATEGORIES: NewCategory[] = [
   income('Friends', '#84cc16', 'HandHeart'),
 ]
 
-export const db = new Dexie('leak') as Dexie & {
+// Local mirror of the signed-in user's Supabase rows. Pages read it through useLiveQuery;
+// cloud.ts writes the server first and this second, and replaces it wholesale on every pull.
+export const db = new Dexie('leak-cache') as Dexie & {
   txs: EntityTable<Tx, 'id'>
   categories: EntityTable<Category, 'id'>
   goals: EntityTable<Goal, 'id'>
@@ -107,34 +109,21 @@ export const db = new Dexie('leak') as Dexie & {
 }
 
 db.version(1).stores({
-  txs: '++id, date, categoryId',
-  categories: '++id, kind',
-  goals: '++id',
+  txs: 'id, date, categoryId',
+  categories: 'id, kind',
+  goals: 'id',
+  subs: 'id, categoryId',
   settings: 'id',
 })
-db.version(2).stores({ subs: '++id, categoryId' })
-db.version(3).stores({}).upgrade((tx) =>
-  tx
-    .table('categories')
-    .toCollection()
-    .modify((c: Category) => {
-      c.icon ??= DEFAULT_CATEGORIES.find((d) => d.name === c.name)?.icon
-    }),
-)
 
 // Stamp every new tx (form, subscriptions, demo); imported ones keep theirs.
 db.txs.hook('creating', (_, tx) => {
   tx.createdAt ??= Date.now()
 })
 
-db.on('populate', async (tx) => {
-  await tx.table('categories').bulkAdd(DEFAULT_CATEGORIES)
-  await tx.table('settings').add(DEFAULT_SETTINGS)
-})
-
 // --- Backup ---------------------------------------------------------------
 
-interface Backup {
+export interface Backup {
   app: 'leak'
   version: 1
   txs: Tx[]
@@ -155,8 +144,21 @@ export async function exportBackup(): Promise<Backup> {
   return { app: 'leak', version: 1, txs, categories, goals, subs, settings }
 }
 
-// Replaces all data. Throws if the file is not a Leak backup, before touching anything.
-export async function importBackup(raw: unknown) {
+/** What a brand-new account starts with. */
+export const emptyBackup = (): Backup => ({
+  app: 'leak',
+  version: 1,
+  txs: [],
+  categories: DEFAULT_CATEGORIES.map((c, i) => ({ ...c, id: String(i) })),
+  goals: [],
+  settings: [DEFAULT_SETTINGS],
+})
+
+/**
+ * Checks a backup and gives every row a fresh uuid, keeping category references intact,
+ * so files from the pre-cloud app (numeric ids) import too. Throws if it is not a Leak backup.
+ */
+export function rekey(raw: unknown): Backup {
   const b = raw as Partial<Backup>
   const ok =
     b?.app === 'leak' &&
@@ -164,18 +166,31 @@ export async function importBackup(raw: unknown) {
     [b.txs, b.categories, b.goals, b.settings].every(Array.isArray) &&
     b.txs!.every((t) => Number.isInteger(t.amount) && /^\d{4}-\d{2}-\d{2}$/.test(t.date))
   if (!ok) throw new Error('invalid backup')
+  const subs = Array.isArray(b.subs) ? b.subs : []
+  const ids = new Map(b.categories!.map((c) => [c.id, crypto.randomUUID()]))
+  if (![...b.txs!, ...subs].every((r) => ids.has(r.categoryId))) throw new Error('invalid backup')
 
-  await db.transaction('rw', [db.txs, db.categories, db.goals, db.subs, db.settings], async () => {
-    await Promise.all([db.txs.clear(), db.categories.clear(), db.goals.clear(), db.subs.clear(), db.settings.clear()])
-    await db.categories.bulkAdd(b.categories!)
-    await db.txs.bulkAdd(b.txs!)
-    await db.goals.bulkAdd(b.goals!)
-    await db.subs.bulkAdd(Array.isArray(b.subs) ? b.subs : [])
-    await db.settings.bulkAdd(b.settings!.length ? b.settings! : [DEFAULT_SETTINGS])
-  })
+  const fresh = <T,>(r: T) => ({ ...r, id: crypto.randomUUID() })
+  const relink = <T extends { categoryId: string }>(r: T) => ({ ...fresh(r), categoryId: ids.get(r.categoryId)! })
+  return {
+    app: 'leak',
+    version: 1,
+    // Categories made before icons existed get their default one, as the old v3 upgrade did.
+    categories: b.categories!.map((c) => ({ ...c, id: ids.get(c.id)!, icon: c.icon ?? DEFAULT_CATEGORIES.find((d) => d.name === c.name)?.icon })),
+    txs: b.txs!.map(relink),
+    goals: b.goals!.map(fresh),
+    subs: subs.map(relink),
+    settings: b.settings!.length ? b.settings! : [DEFAULT_SETTINGS],
+  }
 }
 
-export async function wipeAll() {
-  await db.delete()
-  location.reload() // reopening recreates the DB and re-seeds defaults
+/** This device's pre-cloud database as a backup, or null if it never had any data. */
+export async function legacyBackup(): Promise<Backup | null> {
+  if (!(await Dexie.exists('leak'))) return null
+  const old = new Dexie('leak')
+  await old.open() // no schema declared: Dexie opens whatever version is on disk
+  const all = (name: string) => (old.tables.some((t) => t.name === name) ? old.table(name).toArray() : Promise.resolve([]))
+  const [txs, categories, goals, subs, settings] = await Promise.all(['txs', 'categories', 'goals', 'subs', 'settings'].map(all))
+  old.close()
+  return categories.length ? { app: 'leak', version: 1, txs, categories, goals, subs, settings } : null
 }

@@ -16,7 +16,7 @@ export interface AppCtx {
   t: Dict
   money: (minor: number, compact?: boolean) => string
   cats: Category[]
-  cat: Map<number, Category>
+  cat: Map<string, Category>
 }
 
 export const Ctx = createContext<AppCtx>(null!)
@@ -421,7 +421,7 @@ export function CatIcon({ c, size = 'md' }: { c?: Category; size?: 'sm' | 'md' }
 }
 
 /** Chip list of the categories of one kind. */
-export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; value: number | null; onChange: (id: number) => void; error?: string }) {
+export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; value: string | null; onChange: (id: string) => void; error?: string }) {
   const { t, cats } = useApp()
   return (
     <fieldset className="grid gap-2">
@@ -503,7 +503,7 @@ export function Switch({ checked, onChange, label, hint }: { checked: boolean; o
 }
 
 /** Donut of category shares, with the ranked list below as its legend. */
-export function CategoryBars({ rows }: { rows: { id: number; amount: number; share: number }[] }) {
+export function CategoryBars({ rows }: { rows: { id: string; amount: number; share: number }[] }) {
   const { cat, money, t } = useApp()
   const max = rows[0]?.amount ?? 0
   const total = rows.reduce((n, r) => n + r.amount, 0)

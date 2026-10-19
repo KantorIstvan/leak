@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { AuthenticateWithRedirectCallback, SignInButton, useAuth } from '@clerk/react'
 import { ArrowsClockwise, CalendarBlank, ChartBar, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { clearLocal, pull, setToken, start } from './cloud'
 import { db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
 import { formatMoney, monthOf, today } from './lib'
@@ -50,6 +52,44 @@ function useTheme(theme: Theme | undefined) {
 }
 
 export default function App() {
+  const { isLoaded, isSignedIn, getToken } = useAuth()
+  const [synced, setSynced] = useState(false)
+  useEffect(() => {
+    if (!isLoaded) return
+    setSynced(false)
+    // A signed-out device keeps none of the account's data. Failures surface through main.tsx's rejection handler.
+    if (!isSignedIn) return void clearLocal()
+    setToken(() => getToken())
+    // Offline: the mirror from the last session still shows, read-only.
+    start().finally(() => setSynced(true))
+  }, [isLoaded, isSignedIn, getToken])
+
+  if (!isLoaded || (isSignedIn && !synced)) return null
+  // Back from Google/GitHub: Clerk finishes the sign-in here, then reloads the app signed in.
+  if (!isSignedIn && location.hash.startsWith('#/sso-callback')) return <AuthenticateWithRedirectCallback />
+  return isSignedIn ? <Main /> : <SignedOut />
+}
+
+function SignedOut() {
+  const t = dicts[DEFAULT_SETTINGS.lang]
+  useTheme('system')
+  return (
+    <div className="grid min-h-dvh place-items-center p-4">
+      <div className="grid max-w-sm justify-items-center gap-4 text-center">
+        <span className="grid size-12 place-items-center rounded-xl bg-accent text-accent-fg">
+          <Drop size={26} weight="fill" />
+        </span>
+        <h1 className="text-2xl font-semibold tracking-tight">Leak</h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.accountHint}</p>
+        <SignInButton mode="modal">
+          <Button variant="primary">{t.signIn}</Button>
+        </SignInButton>
+      </div>
+    </div>
+  )
+}
+
+function Main() {
   const settings = useLiveQuery(async () => (await db.settings.get('app')) ?? DEFAULT_SETTINGS)
   const cats = useLiveQuery(() => db.categories.toArray())
   const [page, go] = usePage()
@@ -57,11 +97,14 @@ export default function App() {
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
   useTheme(settings?.theme)
-  // Charge subscriptions on start, and on focus in case the app stayed open into a new month.
+  // Charge subscriptions on start. On focus, first fetch what other devices changed meanwhile,
+  // then charge in case the app stayed open into a new month.
   useEffect(() => {
     syncSubs()
-    addEventListener('focus', syncSubs)
-    return () => removeEventListener('focus', syncSubs)
+    // Offline: keep showing the mirror quietly; an alert here would refocus the window and loop.
+    const refresh = () => pull().then(syncSubs).catch(console.error)
+    addEventListener('focus', refresh)
+    return () => removeEventListener('focus', refresh)
   }, [])
   useEffect(() => {
     if (!settings) return

@@ -1,9 +1,10 @@
 # Leak
 
-A local-first personal finance tracker built around the **50/30/20 rule**: every month your income is split into
+A personal finance tracker built around the **50/30/20 rule**: every month your income is split into
 **Needs** (50%), **Wants** (30%) and **Investments** (20%), and Leak shows how your spending tracks against that plan.
 
-Desktop app (Windows, macOS, Linux) built with Tauri. Works on small screens too. All data stays on your device.
+Desktop app (Windows, macOS, Linux) built with Tauri. Works on small screens too. Sign in with Google, GitHub or an
+email code, and your data syncs to your account so it survives a lost or broken computer.
 
 ## Features
 
@@ -12,6 +13,7 @@ Desktop app (Windows, macOS, Linux) built with Tauri. Works on small screens too
 - Categories (tags) for income and expenses, with a default bucket per category, fully editable
 - Saving goals with an estimate of how many months are left at your current pace
 - Any display currency, Hungarian and English UI, light and dark mode
+- Sync across devices after signing in; the last synced data stays readable offline
 - JSON backup export and import
 
 ## Install
@@ -32,7 +34,8 @@ The app is not code-signed yet, so the first launch needs one extra step:
   **System Settings > Privacy & Security**, scroll down and click **Open Anyway**.
 - **Linux (AppImage):** make it executable with `chmod +x Leak_*.AppImage`, then run it.
 
-Your data is stored locally for your user account and is kept when you update or reinstall.
+Your data lives in your account, so it is there on every device you sign in on. On first sign-in, data from an older
+version of Leak on that computer is uploaded automatically.
 
 ## Tech stack
 
@@ -42,7 +45,8 @@ Your data is stored locally for your user account and is kept when you update or
 | UI | React 19, TypeScript, Vite |
 | Styling | Tailwind CSS 4 |
 | Charts | Recharts |
-| Storage | IndexedDB via Dexie (on-device) |
+| Sign-in | [Clerk](https://clerk.com) |
+| Storage | [Supabase](https://supabase.com) Postgres with row level security; Dexie as the local mirror |
 | Tests | Vitest |
 
 Amounts are stored as integer minor units (cents) to avoid floating-point rounding errors.
@@ -50,6 +54,18 @@ Amounts are stored as integer minor units (cents) to avoid floating-point roundi
 ## Getting started
 
 Requirements: [Node.js](https://nodejs.org) 20+, and for the desktop build [Rust and the Tauri prerequisites](https://tauri.app/start/prerequisites/).
+
+Development runs against its own Clerk development instance and Supabase project, so it never touches real users.
+Put their publishable keys in `.env.development.local` (git-ignored):
+
+```bash
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+VITE_SUPABASE_URL=https://<dev-project>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+```
+
+Create the tables by running [supabase/schema.sql](supabase/schema.sql) in the project's SQL editor. Builds
+(`npm run build`, `tauri build`, the release workflow) use the production keys committed in `.env.production`.
 
 ```bash
 npm install

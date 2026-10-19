@@ -89,7 +89,7 @@ export interface Summary {
   income: number
   expense: number
   buckets: Record<Bucket, number>
-  byCategory: Map<number, number>
+  byCategory: Map<string, number>
 }
 
 export function summarize(txs: Tx[]): Summary {
@@ -132,7 +132,7 @@ export function byMonth(txs: Tx[], year: number): Summary[] {
 }
 
 /** Category totals sorted desc, with share of the given total. */
-export function ranked(byCategory: Map<number, number>, ids: Set<number>, total: number) {
+export function ranked(byCategory: Map<string, number>, ids: Set<string>, total: number) {
   return [...byCategory]
     .filter(([id]) => ids.has(id))
     .map(([id, amount]) => ({ id, amount, share: total ? amount / total : 0 }))
@@ -207,7 +207,7 @@ export interface TxQuery {
   text: string
   kind: 'all' | Tx['kind']
   buckets: Bucket[] // empty = any
-  categories: number[] // empty = any
+  categories: string[] // empty = any
   min: number | null // minor units
   max: number | null
   from: string // YYYY-MM-DD, '' = open
@@ -228,7 +228,7 @@ const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCas
  * Filters and sorts transactions. Text matches the note, the category name, or the amount
  * ("4700", "4 700" and "4700,5" all find 4 700).
  */
-export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: number) => string): Tx[] {
+export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: string) => string): Tx[] {
   const words = fold(q.text).split(/\s+/).filter(Boolean)
   const digits = q.text.replace(/[\s ]/g, '').replace(',', '.')
   const isNumber = /^\d+(\.\d+)?$/.test(digits)
@@ -249,7 +249,8 @@ export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: number) => string)
       (!q.to || tx.date <= q.to) &&
       hit(tx),
   )
-  const byDate = (a: Tx, b: Tx) => b.date.localeCompare(a.date) || b.id - a.id
+  // Same day: most recently logged first.
+  const byDate = (a: Tx, b: Tx) => b.date.localeCompare(a.date) || (b.createdAt ?? 0) - (a.createdAt ?? 0) || b.id.localeCompare(a.id)
   const sorts: Record<TxSort, (a: Tx, b: Tx) => number> = {
     'date-desc': byDate,
     'date-asc': (a, b) => -byDate(a, b),
