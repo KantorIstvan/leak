@@ -152,7 +152,7 @@ function TxList({ txs, onEdit }: { txs: Tx[]; onEdit: (tx: Tx) => void }) {
                 </span>
               </span>
               <span className="shrink-0 text-right">
-                <span className={`num block text-sm font-semibold `}>
+                <span className={`num block text-sm font-semibold ${income ? 'text-income' : 'text-expense'}`}>
                   {income ? '+' : '−'}
                   {money(tx.amount)}
                 </span>
