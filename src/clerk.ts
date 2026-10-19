@@ -2,6 +2,49 @@
 import { Clerk } from '@clerk/clerk-js'
 
 export const desktop = '__TAURI_INTERNALS__' in window
+
+/**
+ * Clerk's sign-in and account screens in the app's own look: its colour tokens (so light/dark follow along),
+ * Geist, and the same radii and shadows as our sheets. Clerk's CSS goes in the components layer, so the
+ * Tailwind classes below win.
+ */
+export const appearance = {
+  cssLayerName: 'components',
+  variables: {
+    colorPrimary: 'var(--ui-accent)',
+    colorPrimaryForeground: 'var(--ui-accent-fg)',
+    colorBackground: 'var(--card)',
+    colorForeground: 'var(--ui-fg)',
+    colorNeutral: 'var(--ui-fg)',
+    colorMuted: 'var(--ui-muted)',
+    colorMutedForeground: 'var(--ui-muted-fg)',
+    colorInput: 'var(--ui-field)',
+    colorInputForeground: 'var(--ui-fg)',
+    colorBorder: 'var(--ui-line)',
+    colorRing: 'var(--ui-accent)',
+    colorDanger: '#e11d48',
+    colorModalBackdrop: 'rgb(9 9 11 / 0.4)',
+    fontFamily: "'Geist Variable', ui-sans-serif, system-ui, sans-serif",
+    borderRadius: '0.5rem',
+  },
+  // Same classes as our own fields, buttons and sheets (ui.tsx), so the two read as one app.
+  elements: {
+    modalBackdrop: 'backdrop-blur-[2px]',
+    cardBox: 'rounded-2xl bg-[var(--card)] shadow-2xl shadow-zinc-950/20 ring-1 ring-zinc-200 dark:ring-zinc-800',
+    card: 'shadow-none',
+    headerTitle: 'text-lg font-semibold tracking-tight',
+    // Flat monochrome buttons, without Clerk's sheen.
+    button: { '&[data-variant="solid"]::after': { display: 'none' } },
+    formButtonPrimary: 'h-10 text-sm font-medium shadow-none transition active:scale-[0.98]',
+    socialButtonsIconButton:
+      'h-10 border-0 bg-white shadow-none ring-1 ring-zinc-200 transition hover:bg-zinc-50 active:scale-[0.98] dark:bg-transparent dark:ring-zinc-700 dark:hover:bg-zinc-800',
+    socialButtonsBlockButton:
+      'h-10 border-0 bg-white shadow-none ring-1 ring-zinc-200 transition hover:bg-zinc-50 active:scale-[0.98] dark:bg-transparent dark:ring-zinc-700 dark:hover:bg-zinc-800',
+    formFieldInput:
+      'h-11 border-0 shadow-none ring-1 ring-zinc-300 transition focus:ring-2 focus:ring-[var(--ui-accent)] dark:ring-zinc-700',
+    footer: 'border-t border-zinc-100 bg-none bg-transparent dark:border-zinc-800',
+  },
+} as const
 export const clerk = new Clerk(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 
 const TOKEN = 'leak-clerk-client'

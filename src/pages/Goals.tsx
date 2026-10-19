@@ -1,10 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
 import { add, remove, update } from '../cloud'
 import { db, type Goal } from '../db'
 import { byMonth, parseAmount, summarize, toInput } from '../lib'
-import { Button, ConfirmButton, Empty, Field, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
+import { Button, ConfirmButton, Empty, Field, Form, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
 
 export function GoalsPage() {
   const { t, money } = useApp()
@@ -76,10 +76,10 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
   const [saved, setSaved] = useState(goal ? toInput(goal.saved) : '')
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
+  async function submit() {
     const tgt = parseAmount(target)
-    const sv = saved.trim() === '' || saved.trim() === '0' ? 0 : parseAmount(saved)
+    // Empty, "0" and "0,00" all mean nothing saved yet.
+    const sv = /^[\s0.,]*$/.test(saved) ? 0 : parseAmount(saved)
     const errs = { name: name.trim() ? undefined : t.nameRequired, target: tgt ? undefined : t.amountInvalid, saved: sv === null ? t.amountInvalid : undefined }
     setErrors(errs)
     if (!name.trim() || !tgt || sv === null) return
@@ -90,7 +90,7 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-5" noValidate>
+    <Form onSubmit={submit}>
       <Field label={t.name} error={errors.name}>
         <input className={inputCls} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -123,6 +123,6 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
           </Button>
         </div>
       </div>
-    </form>
+    </Form>
   )
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, emptyBackup, rekey } from './db'
-import { fromRow, toRow } from './cloud'
+import { chargeId, diff, fromRow, toRow } from './cloud'
 
 // A backup as the pre-cloud app wrote it: numeric ids, no icon, no subs.
 const legacy = {
@@ -34,6 +34,54 @@ describe('rekey', () => {
   it('gives every default category its own id', () => {
     const b = rekey(emptyBackup())
     expect(new Set(b.categories.map((c) => c.id)).size).toBe(b.categories.length)
+  })
+  it('turns away any value the server would reject, so an import never stops halfway', () => {
+    const [food, job] = legacy.categories
+    const tx = legacy.txs[0]
+    for (const bad of [
+      { txs: [{ ...tx, kind: 'refund' }] },
+      { txs: [{ ...tx, date: '2026-02-30' }] },
+      { txs: [{ ...tx, amount: -5 }] },
+      { txs: [{ ...tx, amount: 1.5 }] },
+      { txs: [{ ...tx, note: null }] },
+      { categories: [{ ...food, color: 'url(https://x)' }, job] },
+      { categories: [food, { ...job, id: 1 }], txs: [tx] },
+      { goals: [{ id: 1, name: 'Car', target: '9', saved: 0 }] },
+      { subs: [{ id: 1, name: 'Spotify', amount: 100, categoryId: 1, day: 32, lastMonth: '2026-01' }] },
+      { settings: [{ ...DEFAULT_SETTINGS, ratios: { needs: 50, wants: 30, investments: 30 } }] },
+      { settings: [{ ...DEFAULT_SETTINGS, currency: 'Ft' }] },
+    ])
+      expect(() => rekey({ ...legacy, ...bad }), JSON.stringify(bad)).toThrow()
+  })
+  it('keeps only the fields the server has', () => {
+    const b = rekey({ ...legacy, txs: [{ ...legacy.txs[0], color: 'red', createdAt: 5 }], goals: [{ id: 1, name: 'Car', target: 9, saved: 1, done: true }] })
+    expect(Object.keys(b.txs[0]).sort()).toEqual(['amount', 'bucket', 'categoryId', 'createdAt', 'date', 'id', 'kind', 'note'])
+    expect(Object.keys(b.goals[0]).sort()).toEqual(['id', 'name', 'saved', 'target'])
+  })
+})
+
+describe('mirror diff', () => {
+  const a = { id: 'a', amount: 100, ratios: { needs: 50, wants: 30 } }
+  const b = { id: 'b', amount: 1 }
+  const c = { id: 'c', amount: 2 }
+  it('writes nothing when the server has the same rows, key order aside', () => {
+    expect(diff([a], [{ ratios: { wants: 30, needs: 50 }, amount: 100, id: 'a' }], () => false)).toEqual({ put: [], gone: [] })
+  })
+  it('puts changed and new rows and deletes the ones the server dropped', () => {
+    expect(diff([a, b], [{ ...a, amount: 200 }, c], () => false)).toEqual({ put: [{ ...a, amount: 200 }, c], gone: ['b'] })
+  })
+  it('leaves rows written during the pull as they are', () => {
+    expect(diff([a, b], [{ ...a, amount: 200 }, c], (id) => id === 'a' || id === 'b')).toEqual({ put: [c], gone: [] })
+  })
+})
+
+describe('chargeId', () => {
+  it('is one uuid per subscription and month, the same on every run', async () => {
+    const id = await chargeId('sub-1', '2026-10')
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(await chargeId('sub-1', '2026-10')).toBe(id)
+    expect(await chargeId('sub-1', '2026-11')).not.toBe(id)
+    expect(await chargeId('sub-2', '2026-10')).not.toBe(id)
   })
 })
 

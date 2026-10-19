@@ -6,13 +6,25 @@ import { DatePicker } from './DatePicker'
 import { EMPTY_QUERY, filterCount, parseAmount, queryTxs, type TxQuery, type TxSort } from './lib'
 import { ICONS } from './icons'
 import {
-  Amount, BUCKET_BG, Button, CatIcon, CategoryPicker, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, Switch, useApp, useMonthlyIncome,
+  Amount, BUCKET_BG, Button, CatIcon, fade, CategoryPicker, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, Switch, useApp, useMonthlyIncome,
 } from './ui'
 
 const SORTS: TxSort[] = ['date-desc', 'date-asc', 'amount-desc', 'amount-asc', 'category', 'note']
 
 /** The month's transaction list with search, filters, sorting and multi-select bulk editing. */
-export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: string; onAdd: () => void; onEdit: (tx: Tx) => void }) {
+export function TxBrowser({
+  txs,
+  month,
+  onAdd,
+  onEdit,
+  highlight,
+}: {
+  txs: Tx[]
+  month: string
+  onAdd: () => void
+  onEdit: (tx: Tx) => void
+  highlight?: string | null // category whose rows stand out, the rest fade
+}) {
   const { t, cat, money } = useApp()
   const [q, setQ] = useState<TxQuery>(EMPTY_QUERY)
   const [minText, setMinText] = useState('')
@@ -54,7 +66,7 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
   return (
     <div className="grid gap-4">
       {selected ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl bg-zinc-100 p-2 dark:bg-zinc-800/70">
+        <div className="anim-fade flex flex-wrap items-center gap-2 rounded-xl bg-zinc-100 p-2 dark:bg-zinc-800/70">
           <button
             type="button"
             role="checkbox"
@@ -75,14 +87,14 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
           </Button>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-2">
+        <div className="anim-fade flex flex-wrap gap-2">
           <div className="w-full">
             <SearchInput className="h-10!" placeholder={t.searchTx} value={q.text} onChange={(text) => set({ text })} />
           </div>
           <Button aria-expanded={showFilters} onClick={() => setShowFilters(!showFilters)} className={active ? 'ring-2! ring-accent!' : ''}>
-            <FunnelSimple size={16} />
+            <FunnelSimple size={16} weight={showFilters ? 'fill' : 'regular'} />
             {t.filters}
-            {active > 0 && <span className="num grid size-5 place-items-center rounded-full bg-accent text-xs text-accent-fg">{active}</span>}
+            {active > 0 && <span key={active} className="anim-pop num grid size-5 place-items-center rounded-full bg-accent text-xs text-accent-fg">{active}</span>}
           </Button>
           <Select
             label={t.sortLabel}
@@ -99,7 +111,7 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
       )}
 
       {showFilters && !selected && (
-        <div className="grid gap-4 rounded-xl bg-zinc-50 p-4 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
+        <div className="anim-pop grid gap-4 rounded-xl bg-zinc-50 p-4 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
           <Segmented
             label={t.kindLabel}
             value={q.kind}
@@ -150,7 +162,7 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
             </div>
           </div>
           {active > 0 && (
-            <Button variant="ghost" className="justify-self-start" onClick={clear}>
+            <Button variant="ghost" className="anim-fade justify-self-start" onClick={clear}>
               <X size={16} />
               {t.clearFilters}
             </Button>
@@ -159,7 +171,7 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
       )}
 
       {narrowed && list.length > 0 && (
-        <p className="num -mb-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="anim-fade num -mb-1 text-sm text-zinc-600 dark:text-zinc-400">
           {[t.results(list.length), sums.income && `+${money(sums.income)}`, sums.expense && `−${money(sums.expense)}`].filter(Boolean).join(' · ')}
         </p>
       )}
@@ -168,6 +180,7 @@ export function TxBrowser({ txs, month, onAdd, onEdit }: { txs: Tx[]; month: str
         <TxList
           txs={list}
           selected={selected}
+          highlight={highlight}
           onPick={(tx) => {
             if (!selected) return onEdit(tx)
             const next = new Set(selected)
@@ -225,7 +238,7 @@ const Box = ({ on }: { on: boolean }) => (
   </span>
 )
 
-function TxList({ txs, selected, onPick }: { txs: Tx[]; selected: Set<string> | null; onPick: (tx: Tx) => void }) {
+function TxList({ txs, selected, highlight, onPick }: { txs: Tx[]; selected: Set<string> | null; highlight?: string | null; onPick: (tx: Tx) => void }) {
   const { t, s, cat } = useApp()
   const monthlyIncome = useMonthlyIncome()
   const day = new Intl.DateTimeFormat(t.locale, { month: 'short', day: 'numeric' })
@@ -236,14 +249,14 @@ function TxList({ txs, selected, onPick }: { txs: Tx[]; selected: Set<string> | 
         const c = cat.get(tx.categoryId)
         const on = !!selected?.has(tx.id)
         return (
-          <li key={tx.id}>
+          <li key={tx.id} className={`anim-fade-up ${fade(highlight, tx.categoryId)}`}>
             <button
               type="button"
               role={selected ? 'checkbox' : undefined}
               aria-checked={selected ? on : undefined}
               onClick={() => onPick(tx)}
               className={`flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
-                on ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
+                on || highlight === tx.categoryId ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
               }`}
             >
               {selected && <Box on={on} />}
@@ -329,7 +342,7 @@ function BulkForm({ txs, onDone }: { txs: Tx[]; onDone: (changed: boolean) => vo
 
       <div className="grid gap-3">
         <Switch checked={moveDate} onChange={setMoveDate} label={t.changeDate} />
-        {moveDate && <DatePicker label={t.date} value={date} onChange={setDate} />}
+        {moveDate && <div className="anim-pop"><DatePicker label={t.date} value={date} onChange={setDate} /></div>}
       </div>
 
       <Field label={t.note}>

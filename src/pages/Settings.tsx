@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react'
-import { UserButton } from '@clerk/react'
-import { CaretUpDown, Check, DownloadSimple, MagnifyingGlass, UploadSimple } from '@phosphor-icons/react'
-import { replaceAll, saveSettings, wipeAll } from '../cloud'
-import { BUCKETS, exportBackup, rekey, type Bucket } from '../db'
-import { currencySymbol, today } from '../lib'
-import { BUCKET_BG, Button, Card, ConfirmButton, PageHeader, Segmented, Switch, useApp, useMonthlyIncome } from '../ui'
+import { useClerk, useUser } from '@clerk/react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { CaretUpDown, Check, CloudCheck, DownloadSimple, MagnifyingGlass, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
+import { add, replaceAll, saveSettings, wipeAll } from '../cloud'
+import { decodeCsv, missing, readCsv, sameName, toCsv, type Row } from '../csv'
+import { BUCKETS, db, exportBackup, rekey, type Backup, type Bucket, type Kind } from '../db'
+import { currencySymbol, monthOf, today } from '../lib'
+import { BUCKET_BG, Button, Card, ConfirmButton, PageHeader, Segmented, Select, Switch, useApp, useMonthlyIncome } from '../ui'
+import { desktop } from '../clerk'
+import { SWATCHES } from './Categories'
 
 // Every ISO 4217 currency the runtime knows about.
 const CURRENCIES = Intl.supportedValuesOf('currency')
@@ -18,9 +22,7 @@ export function SettingsPage() {
     <>
       <PageHeader title={t.nav.settings} />
       <div className="grid max-w-3xl gap-4">
-        <Card title={t.account} hint={t.accountHint}>
-          <UserButton showName />
-        </Card>
+        <AccountCard />
 
         <Card>
           <div className="grid gap-6">
@@ -62,9 +64,45 @@ export function SettingsPage() {
         </Card>
 
         <Ratios />
+        <CsvCard />
         <DataCard />
       </div>
     </>
+  )
+}
+
+/** Profile row as settings pages usually show it: avatar, name and email, with account actions on the side. */
+function AccountCard() {
+  const { t } = useApp()
+  const { user } = useUser()
+  const clerk = useClerk()
+  if (!user) return null
+  const email = user.primaryEmailAddress?.emailAddress
+  const name = user.fullName || user.username || email
+  return (
+    <Card title={t.account}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-4">
+        <img src={user.imageUrl} alt="" className="size-14 shrink-0 rounded-full object-cover ring-1 ring-zinc-900/10 dark:ring-white/10" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-base font-semibold tracking-tight">{name}</div>
+          {email && email !== name && <div className="truncate text-sm text-zinc-600 dark:text-zinc-400">{email}</div>}
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+            <CloudCheck size={14} weight="bold" aria-hidden />
+            {t.synced}
+          </div>
+        </div>
+        <div className="flex w-full gap-2 sm:w-auto">
+          <Button className="flex-1 sm:flex-none" onClick={() => clerk.openUserProfile()}>
+            <UserGear size={16} />
+            {t.manageAccount}
+          </Button>
+          <Button variant="ghost" className="flex-1 sm:flex-none" onClick={() => clerk.signOut()}>
+            <SignOut size={16} />
+            {t.signOut}
+          </Button>
+        </div>
+      </div>
+    </Card>
   )
 }
 
@@ -201,6 +239,9 @@ function Ratios() {
   const track = useRef<HTMLDivElement>(null)
   // Which cut is being dragged; 'tie' when both sit on the same spot until the drag direction decides.
   const drag = useRef<0 | 1 | 'tie' | null>(null)
+  const [held, setHeld] = useState<0 | 1 | 'tie' | null>(null) // drag, as state for styling
+  // Presets and arrow keys glide into place; a drag follows the pointer with no lag.
+  const ease = held === null ? 'motion-safe:duration-300 motion-safe:ease-[cubic-bezier(0.16,1,0.3,1)]' : ''
   const cuts = [r.needs, r.needs + r.wants]
 
   const save = (next: Record<Bucket, number>) => {
@@ -220,6 +261,7 @@ function Ratios() {
     const p = posOf(e)
     drag.current = cuts[0] === cuts[1] ? 'tie' : Math.abs(p - cuts[0]) <= Math.abs(p - cuts[1]) ? 0 : 1
     e.currentTarget.setPointerCapture(e.pointerId)
+    setHeld(drag.current)
     if (drag.current !== 'tie') setR(moveCut(drag.current, p))
   }
   function onMove(e: PointerEvent<HTMLDivElement>) {
@@ -228,12 +270,14 @@ function Ratios() {
     if (drag.current === 'tie') {
       if (Math.round(p) === cuts[0]) return
       drag.current = p < cuts[0] ? 0 : 1
+      setHeld(drag.current)
     }
     setR(moveCut(drag.current, p))
   }
   function onUp() {
     if (drag.current === null) return
     drag.current = null
+    setHeld(null)
     if (!same(r, s.ratios)) update({ ratios: r })
   }
   function onKey(i: 0 | 1, e: KeyboardEvent<HTMLDivElement>) {
@@ -253,9 +297,13 @@ function Ratios() {
         onPointerCancel={onUp}
         className="relative my-2 h-14 cursor-ew-resize touch-none select-none"
       >
-        <div className="flex h-full gap-0.5 overflow-hidden rounded-xl">
+        <div className="flex h-full overflow-hidden rounded-xl">
           {BUCKETS.filter((b) => r[b] > 0).map((b) => (
-            <div key={b} className={`grid min-w-0 place-items-center text-sm font-semibold text-white dark:text-zinc-950 ${BUCKET_BG[b]}`} style={{ flex: `${r[b]} 1 0` }}>
+            <div
+              key={b}
+              className={`grid min-w-0 place-items-center text-sm font-semibold text-white dark:text-zinc-950 ${held === null ? 'motion-safe:transition-[flex-grow]' : ''} ${ease} ${BUCKET_BG[b]}`}
+              style={{ flex: `${r[b]} 1 0` }}
+            >
               {r[b] >= 10 && <span className="num drop-shadow-sm dark:drop-shadow-none">{r[b]}%</span>}
             </div>
           ))}
@@ -271,12 +319,22 @@ function Ratios() {
             aria-valuenow={cuts[i]}
             aria-valuetext={BUCKETS.map((b) => `${t.bucket[b]} ${r[b]}%`).join(', ')}
             onKeyDown={(e) => onKey(i, e)}
-            className="absolute top-1/2 grid h-16 w-5 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-white shadow-md ring-1 shadow-zinc-900/20 ring-zinc-300 transition-shadow hover:ring-zinc-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:bg-zinc-100 dark:ring-zinc-500"
+            className={`group absolute inset-y-0 w-8 -translate-x-1/2 cursor-ew-resize outline-none ${held === null ? 'motion-safe:transition-[left]' : ''} ${ease}`}
             style={{ left: `${cuts[i]}%` }}
           >
-            <span className="flex gap-0.5" aria-hidden>
-              <span className="h-5 w-px bg-zinc-400" />
-              <span className="h-5 w-px bg-zinc-400" />
+            {/* The cut itself: a seam in the card colour that opens up a little on hover and while held. */}
+            <span
+              aria-hidden
+              className={`absolute inset-y-0 left-1/2 -translate-x-1/2 bg-[var(--card)] transition-[width] duration-200 group-hover:w-1.5 ${held === i ? 'w-1.5' : 'w-[3px]'}`}
+            />
+            {/* The knob shows the two buckets it divides. */}
+            <span
+              aria-hidden
+              className={`absolute top-1/2 left-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[var(--card)] shadow-lg ring-1 shadow-zinc-950/25 ring-zinc-900/10 transition-transform duration-200 ease-out group-focus-visible:ring-2 group-focus-visible:ring-accent dark:shadow-black/50 dark:ring-white/10 ${
+                held === i ? 'scale-90' : 'group-hover:scale-115'
+              }`}
+            >
+              <span className="size-3 rounded-full" style={{ background: `linear-gradient(90deg, var(--color-${BUCKETS[i]}) 50%, var(--color-${BUCKETS[i + 1]}) 50%)` }} />
             </span>
           </div>
         ))}
@@ -320,38 +378,193 @@ function Ratios() {
   )
 }
 
-function DataCard() {
-  const { t } = useApp()
-  const [pending, setPending] = useState<unknown>(null)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+/** Saves a text file: a Save As dialog on desktop (the webview ignores <a download>), a download in the browser. */
+async function save(text: string, name: string, type: string) {
+  if (desktop) {
+    const { save: pick } = await import('@tauri-apps/plugin-dialog')
+    const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+    const ext = name.split('.').pop()!
+    const path = await pick({ defaultPath: name, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] })
+    if (path) await writeTextFile(path, text)
+    return
+  }
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([text], { type }))
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href)) // revoking in the same tick can cancel the download
+}
 
-  async function download() {
-    const blob = new Blob([JSON.stringify(await exportBackup(), null, 2)], { type: 'application/json' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `leak-backup-${today()}.json`
-    a.click()
-    URL.revokeObjectURL(a.href)
+const fileCls =
+  'inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-zinc-800 ring-1 ring-zinc-200 transition focus-within:outline-2 focus-within:outline-accent hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-zinc-700 dark:hover:bg-zinc-800'
+
+/** Year + month pickers for a "YYYY-MM" value. */
+function MonthPick({ label, value, years, onChange }: { label: string; value: string; years: string[]; onChange: (m: string) => void }) {
+  const { t } = useApp()
+  const [y, m] = value.split('-')
+  const name = new Intl.DateTimeFormat(t.locale, { month: 'long' })
+  return (
+    <div className="grid gap-2">
+      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+      <div className="flex gap-2">
+        <Select label={label} value={y} onChange={(v) => onChange(`${v}-${m}`)} options={years.map((v) => ({ value: v, label: v }))} />
+        <Select
+          label={label}
+          value={m}
+          onChange={(v) => onChange(`${y}-${v}`)}
+          options={Array.from({ length: 12 }, (_, i) => {
+            const v = String(i + 1).padStart(2, '0')
+            return { value: v, label: name.format(new Date(2000, i, 1)) }
+          })}
+        />
+      </div>
+    </div>
+  )
+}
+
+interface CsvPlan {
+  rows: Row[]
+  skip: number
+  bad: number[]
+  newCats: { name: string; kind: Kind }[]
+}
+
+/** Transactions out to and in from a spreadsheet. Import only adds what is missing (see csv.ts). */
+function CsvCard() {
+  const { t, s, cat, cats } = useApp()
+  // The oldest date straight from the index: reading every transaction for it took ~30 ms per 10 000.
+  const oldest = useLiveQuery(async () => (await db.txs.orderBy('date').first())?.date)
+  const now = monthOf(today())
+  const first = monthOf(oldest && oldest < `${now}-01` ? oldest : `${now}-01`)
+  const [range, setRange] = useState<[string, string] | null>(null)
+  const [from, to] = range ?? [first, now]
+  const firstYear = Number(first.slice(0, 4))
+  const years = Array.from({ length: Number(now.slice(0, 4)) - firstYear + 1 }, (_, i) => String(firstYear + i))
+  const [plan, setPlan] = useState<CsvPlan | null>(null)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const name = (id: string) => cat.get(id)?.name ?? t.uncategorized
+  const findCat = <C extends { name: string; kind: Kind }>(list: C[], r: Row) => list.find((c) => c.kind === r.kind && sameName(c.name, r.category))
+
+  async function exportCsv() {
+    const [a, b] = from <= to ? [from, to] : [to, from]
+    const list = await db.txs.where('date').between(`${a}-01`, `${b}-31`, true, true).toArray()
+    await save(toCsv(list, name), `leak-${a}_${b}.csv`, 'text/csv')
   }
 
   async function pick(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    setMsg(null)
+    const parsed = readCsv(decodeCsv(await file.arrayBuffer(), s.lang), t.uncategorized)
+    if (!parsed) return setMsg({ ok: false, text: t.csvInvalid })
+    const rows = missing(parsed.rows, await db.txs.toArray(), name)
+    const newCats: CsvPlan['newCats'] = []
+    for (const r of rows) if (!findCat(cats, r) && !findCat(newCats, r)) newCats.push({ name: r.category, kind: r.kind })
+    setPlan({ rows, skip: parsed.rows.length - rows.length, bad: parsed.bad, newCats })
+  }
+
+  async function confirmImport() {
+    const p = plan!
     try {
-      setPending(JSON.parse(await file.text()))
+      const made = await add(
+        'categories',
+        p.newCats.map((c, i) => ({
+          ...c,
+          bucket: 'needs' as Bucket,
+          ...(c.name === t.uncategorized ? { color: '#a1a1aa', icon: 'DotsThree' } : { color: SWATCHES[i % SWATCHES.length], icon: 'Tag' }),
+        })),
+      )
+      const all = [...cats, ...made]
+      await add(
+        'txs',
+        p.rows.map((r) => {
+          const c = findCat(all, r)!
+          return { date: r.date, kind: r.kind, amount: r.amount, categoryId: c.id, bucket: r.kind === 'income' ? null : (r.bucket ?? c.bucket), note: r.note }
+        }),
+      )
+      setMsg({ ok: true, text: t.csvAdded(p.rows.length) })
+    } catch (e) {
+      // Some batches may be in already: this plan would add those twice, picking the file again only adds the rest.
+      console.error(e)
+      setMsg({ ok: false, text: t.csvFailed })
+    }
+    setPlan(null)
+  }
+
+  return (
+    <Card title={t.csvTitle} hint={t.csvHint}>
+      <div className="grid gap-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <MonthPick label={t.from} value={from} years={years} onChange={(m) => setRange([m, to])} />
+          <MonthPick label={t.to} value={to} years={years} onChange={(m) => setRange([from, m])} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={exportCsv}>
+            <DownloadSimple size={16} />
+            {t.exportCsv}
+          </Button>
+          <label className={fileCls}>
+            <UploadSimple size={16} />
+            {t.importCsv}
+            <input type="file" accept="text/csv,.csv" className="sr-only" onChange={pick} />
+          </label>
+        </div>
+      </div>
+
+      {plan && (
+        <div className="anim-pop mt-4 grid gap-3 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-800/70">
+          <p>{plan.rows.length ? t.csvPreview(plan.rows.length, plan.skip, plan.newCats.length) : t.csvNothing}</p>
+          {plan.bad.length > 0 && (
+            <p className="text-rose-700 dark:text-rose-400">{t.csvBad(plan.bad.slice(0, 10).join(', ') + (plan.bad.length > 10 ? '…' : ''))}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setPlan(null)}>
+              {t.cancel}
+            </Button>
+            {plan.rows.length > 0 && (
+              <Button variant="primary" onClick={confirmImport}>
+                {t.importCsv}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {msg && <p className={`anim-fade mt-3 text-sm ${msg.ok ? 'text-zinc-700 dark:text-zinc-300' : 'font-medium text-rose-700 dark:text-rose-400'}`}>{msg.text}</p>}
+    </Card>
+  )
+}
+
+function DataCard() {
+  const { t } = useApp()
+  const [pending, setPending] = useState<Backup | null>(null)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function download() {
+    await save(JSON.stringify(await exportBackup(), null, 2), `leak-backup-${today()}.json`, 'application/json')
+  }
+
+  // Checked on pick, so a broken file is turned away before the "replaces everything" question.
+  async function pick(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      setPending(rekey(JSON.parse(await file.text())))
       setMsg(null)
     } catch {
+      setPending(null)
       setMsg({ ok: false, text: t.importFailed })
     }
   }
 
   async function confirmImport() {
     try {
-      await replaceAll(rekey(pending))
+      await replaceAll(pending!)
       setMsg({ ok: true, text: t.imported })
-    } catch {
-      setMsg({ ok: false, text: t.importFailed })
+    } catch (e) {
+      console.error(e)
+      setMsg({ ok: false, text: t.importNetworkFailed })
     }
     setPending(null)
   }
@@ -363,7 +576,7 @@ function DataCard() {
           <DownloadSimple size={16} />
           {t.exportBackup}
         </Button>
-        <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-zinc-800 ring-1 ring-zinc-200 transition focus-within:outline-2 focus-within:outline-accent hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-zinc-700 dark:hover:bg-zinc-800">
+        <label className={fileCls}>
           <UploadSimple size={16} />
           {t.importBackup}
           <input type="file" accept="application/json,.json" className="sr-only" onChange={pick} />

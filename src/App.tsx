@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { AuthenticateWithRedirectCallback, SignInButton, useAuth } from '@clerk/react'
-import { ArrowsClockwise, CalendarBlank, ChartBar, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { AuthenticateWithRedirectCallback, ClerkFailed, SignInButton, useAuth } from '@clerk/react'
+import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { finishSso } from './clerk'
-import { clearLocal, pull, setToken, start } from './cloud'
+import { clearLocal, refresh, setToken, syncFailed } from './cloud'
 import { db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
 import { formatMoney, monthOf, today } from './lib'
@@ -15,7 +15,7 @@ import { GoalsPage } from './pages/Goals'
 import { CategoriesPage } from './pages/Categories'
 import { SettingsPage } from './pages/Settings'
 import { Updater } from './Updater'
-import { SubsPage, syncSubs } from './pages/Subs'
+import { SubsPage } from './pages/Subs'
 
 type Page = 'month' | 'year' | 'subs' | 'goals' | 'categories' | 'settings'
 const NAV: { id: Page; icon: Icon }[] = [
@@ -55,38 +55,61 @@ function useTheme(theme: Theme | undefined) {
 // Desktop return from Google/GitHub: Clerk's native mode lands back on the app with ?rotating_token_nonce=….
 const ssoNonce = new URLSearchParams(location.search).get('rotating_token_nonce')
 let ssoStarted = false // StrictMode runs effects twice; the nonce only works once
+const reload = () => location.reload()
 
 export default function App() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
-  const [synced, setSynced] = useState(false)
+  // When Main can show: at once if this device holds the account's data from the last session, else after the first sync.
+  const [data, setData] = useState<'wait' | 'ready' | 'failed'>('wait')
   const [finishing, setFinishing] = useState(!!ssoNonce)
   useEffect(() => {
     if (!isLoaded || !ssoNonce || ssoStarted) return
     ssoStarted = true
-    finishSso(ssoNonce).finally(() => {
-      history.replaceState(null, '', '/')
-      setFinishing(false)
-    })
+    finishSso(ssoNonce)
+      .catch((e) => {
+        console.error(e)
+        alert(dicts[DEFAULT_SETTINGS.lang].signInFailed)
+      })
+      .finally(() => {
+        history.replaceState(null, '', '/')
+        setFinishing(false)
+      })
   }, [isLoaded])
   useEffect(() => {
     if (!isLoaded) return
-    setSynced(false)
+    setData('wait')
     // A signed-out device keeps none of the account's data. Failures surface through main.tsx's rejection handler.
     if (!isSignedIn) return void clearLocal()
     setToken(() => getToken())
-    // Offline: the mirror from the last session still shows, read-only.
-    start().finally(() => setSynced(true))
+    let live = true
+    ;(async () => {
+      // The sync refreshes the last session's data in the background; offline that data stays, under a banner (Main).
+      if ((await db.settings.count()) && live) setData('ready')
+      await refresh().catch(console.error)
+      if (live) setData((await db.settings.count()) ? 'ready' : 'failed')
+    })()
+    return () => {
+      live = false
+    }
   }, [isLoaded, isSignedIn, getToken])
 
-  if (!isLoaded || finishing || (isSignedIn && !synced)) return null
+  // Clerk could not load (offline, or its servers are down), so nobody can sign in: show what this device has.
+  if (!isLoaded)
+    return (
+      <ClerkFailed>
+        <OfflineStart />
+      </ClerkFailed>
+    )
+  if (finishing) return null
   // A Google/GitHub account with no Leak user yet comes back unfinished, to #/sso-callback and without a nonce:
   // Clerk's own callback turns that sign-in into a sign-up. Finished sign-ins come back with the nonce (above).
-  if (!isSignedIn && location.hash.startsWith('#/sso-callback')) return <AuthenticateWithRedirectCallback />
-  return isSignedIn ? <Main /> : <SignedOut />
+  if (!isSignedIn) return location.hash.startsWith('#/sso-callback') ? <AuthenticateWithRedirectCallback /> : <SignedOut />
+  if (data === 'failed') return <NoConnection />
+  return data === 'ready' ? <Main /> : null
 }
 
-function SignedOut() {
-  const t = dicts[DEFAULT_SETTINGS.lang]
+/** Full-window message under the logo, for the screens before the app proper. */
+function Notice({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
   useTheme('system')
   return (
     <div className="grid min-h-dvh place-items-center p-4">
@@ -94,33 +117,70 @@ function SignedOut() {
         <span className="grid size-12 place-items-center rounded-xl bg-accent text-accent-fg">
           <Drop size={26} weight="fill" />
         </span>
-        <h1 className="text-2xl font-semibold tracking-tight">Leak</h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.accountHint}</p>
-        <SignInButton mode="modal">
-          <Button variant="primary">{t.signIn}</Button>
-        </SignInButton>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">{hint}</p>
+        {children}
       </div>
     </div>
   )
 }
 
-function Main() {
+function SignedOut() {
+  const t = dicts[DEFAULT_SETTINGS.lang]
+  return (
+    <Notice title="Leak" hint={t.accountHint}>
+      <SignInButton mode="modal">
+        <Button variant="primary">{t.signIn}</Button>
+      </SignInButton>
+    </Notice>
+  )
+}
+
+function NoConnection() {
+  const t = dicts[DEFAULT_SETTINGS.lang]
+  return (
+    <Notice title={t.noConnection} hint={t.noConnectionHint}>
+      <Button variant="primary" onClick={reload}>
+        {t.retry}
+      </Button>
+    </Notice>
+  )
+}
+
+/** Clerk could not load: this device's data from the last session, read-only, or why there is nothing to show. */
+function OfflineStart() {
+  const cached = useLiveQuery(() => db.settings.count())
+  // Clerk only tries again on a reload.
+  useEffect(() => {
+    addEventListener('online', reload)
+    return () => removeEventListener('online', reload)
+  }, [])
+  if (cached === undefined) return null
+  return cached ? <Main clerkDown /> : <NoConnection />
+}
+
+function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const settings = useLiveQuery(async () => (await db.settings.get('app')) ?? DEFAULT_SETTINGS)
   const cats = useLiveQuery(() => db.categories.toArray())
+  const failed = useSyncExternalStore(syncFailed.subscribe, syncFailed.get)
   const [page, go] = usePage()
   const [month, setMonth] = useState(() => monthOf(today()))
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
   useTheme(settings?.theme)
-  // Charge subscriptions on start. On focus, first fetch what other devices changed meanwhile,
-  // then charge in case the app stayed open into a new month.
+  // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open into
+  // a new month (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
+  // the window and loop.
   useEffect(() => {
-    syncSubs()
-    // Offline: keep showing the mirror quietly; an alert here would refocus the window and loop.
-    const refresh = () => pull().then(syncSubs).catch(console.error)
-    addEventListener('focus', refresh)
-    return () => removeEventListener('focus', refresh)
-  }, [])
+    if (clerkDown) return
+    const sync = () => void refresh().catch(console.error)
+    addEventListener('focus', sync)
+    addEventListener('online', sync)
+    return () => {
+      removeEventListener('focus', sync)
+      removeEventListener('online', sync)
+    }
+  }, [clerkDown])
   useEffect(() => {
     if (!settings) return
     document.documentElement.lang = settings.lang
@@ -185,7 +245,19 @@ function Main() {
         </aside>
 
         <main className="px-4 pt-6 pb-32 sm:px-6 md:px-8 md:pt-8 md:pb-12">
-          <div className="mx-auto max-w-6xl">
+          {(failed || clerkDown) && (
+            <div
+              role="status"
+              className="anim-fade mx-auto mb-6 flex max-w-6xl items-center gap-3 rounded-xl bg-zinc-100 py-2 pr-2 pl-4 text-sm text-zinc-700 dark:bg-zinc-800/70 dark:text-zinc-300"
+            >
+              <CloudSlash size={18} className="shrink-0" aria-hidden />
+              <span className="flex-1">{t.offline}</span>
+              <Button variant="ghost" className="h-8 px-3" onClick={clerkDown ? reload : () => refresh().catch(console.error)}>
+                {t.retry}
+              </Button>
+            </div>
+          )}
+          <div key={page} className="anim-fade-up mx-auto max-w-6xl">
             {page === 'month' && <MonthPage month={month} setMonth={setMonth} onAdd={add} onEdit={setEditing} />}
             {page === 'year' && <YearPage year={year} setYear={setYear} openMonth={openMonth} />}
             {page === 'subs' && <SubsPage />}

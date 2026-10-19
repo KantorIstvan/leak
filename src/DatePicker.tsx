@@ -84,7 +84,7 @@ export function DatePicker({
 
       {open && (
         <div
-          className={`absolute top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-3 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700 ${
+          className={`anim-pop absolute top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-3 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700 ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >

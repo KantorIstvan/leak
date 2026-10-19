@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { CalendarBlank, CaretDown, CaretLeft, CaretRight, Check, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
@@ -35,13 +35,63 @@ const VARIANTS: Record<Variant, string> = {
   danger: 'text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50 dark:text-rose-300 dark:ring-rose-900 dark:hover:bg-rose-950',
 }
 
-export function Button({ variant = 'secondary', className = '', ...p }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+/**
+ * Runs a handler unless the promise of the last one is still pending, and reports that as `busy`.
+ * The ref, not the state, guards: a second click can land before React re-renders. A failure still reaches main.tsx's alert.
+ */
+function useBusy() {
+  const [busy, setBusy] = useState(false)
+  const running = useRef(false)
+  const run = (handler: () => unknown) => {
+    if (running.current) return
+    const result = handler()
+    if (!(result instanceof Promise)) return
+    running.current = true
+    setBusy(true)
+    result.finally(() => {
+      running.current = false
+      setBusy(false)
+    })
+  }
+  return [busy, run] as const
+}
+
+/** An async onClick disables the button until it settles, so a double click cannot save twice. */
+export function Button({
+  variant = 'secondary',
+  className = '',
+  onClick,
+  disabled,
+  ...p
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & { variant?: Variant; onClick?: (e: MouseEvent<HTMLButtonElement>) => unknown }) {
+  const [busy, run] = useBusy()
   return (
     <button
       type="button"
       className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium whitespace-nowrap transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${VARIANTS[variant]} ${className}`}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      onClick={(e) => run(() => onClick?.(e))}
       {...p}
     />
+  )
+}
+
+/** A form whose async submit runs one at a time: while it saves, every field and button in it is disabled. */
+export function Form({ onSubmit, children }: { onSubmit: () => unknown; children: ReactNode }) {
+  const [busy, run] = useBusy()
+  return (
+    <form
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault()
+        run(onSubmit)
+      }}
+    >
+      <fieldset disabled={busy} className="grid min-w-0 gap-5">
+        {children}
+      </fieldset>
+    </form>
   )
 }
 
@@ -81,7 +131,7 @@ export function usePopover() {
 }
 
 export const popCls =
-  'absolute z-20 mt-2 rounded-xl bg-white p-1 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700'
+  'anim-pop absolute z-20 mt-2 rounded-xl bg-white p-1 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700'
 
 /** Field-looking trigger button shared by the custom pickers. */
 export const triggerCls =
@@ -208,8 +258,8 @@ export function DayOfMonthPicker({ label, value, onChange, format }: { label: st
   )
 }
 
-/** Two-step delete: first click arms, second click (within 4s) confirms. */
-export function ConfirmButton({ label, onConfirm }: { label: string; onConfirm: () => void }) {
+/** Two-step delete: first click arms, second click (within 4s) confirms. A third click starts over. */
+export function ConfirmButton({ label, onConfirm }: { label: string; onConfirm: () => unknown }) {
   const { t } = useApp()
   const [armed, setArmed] = useState(false)
   useEffect(() => {
@@ -218,8 +268,17 @@ export function ConfirmButton({ label, onConfirm }: { label: string; onConfirm: 
     return () => clearTimeout(id)
   }, [armed])
   return (
-    <Button variant="danger" onClick={() => (armed ? onConfirm() : setArmed(true))}>
-      {armed ? t.confirmDelete : label}
+    <Button
+      variant="danger"
+      onClick={() => {
+        if (!armed) return setArmed(true)
+        setArmed(false)
+        return onConfirm()
+      }}
+    >
+      <span key={String(armed)} className="anim-fade">
+        {armed ? t.confirmDelete : label}
+      </span>
     </Button>
   )
 }
@@ -282,7 +341,7 @@ export function Field({ label, error, hint, children }: { label: string; error?:
       <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
       {children}
       {hint && !error && <span className="text-xs text-zinc-600 dark:text-zinc-400">{hint}</span>}
-      {error && <span className="text-xs font-medium text-rose-700 dark:text-rose-400">{error}</span>}
+      {error && <span className="anim-fade text-xs font-medium text-rose-700 dark:text-rose-400">{error}</span>}
     </label>
   )
 }
@@ -386,6 +445,7 @@ export function Empty({ title, hint, action }: { title: string; hint?: string; a
 /** Bottom sheet on phones, centred dialog on desktop. Children mount only while open, so forms reset. */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const down = useRef<EventTarget | null>(null)
   const { t } = useApp()
   useEffect(() => {
     const d = ref.current!
@@ -393,7 +453,14 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
     if (!open && d.open) d.close()
   }, [open])
   return (
-    <dialog ref={ref} className="sheet" onClose={onClose} onClick={(e) => e.target === ref.current && onClose()}>
+    <dialog
+      ref={ref}
+      className="sheet"
+      onClose={onClose}
+      // Only a click that also started on the backdrop closes: a text selection dragged out of a field must not.
+      onPointerDown={(e) => (down.current = e.target)}
+      onClick={(e) => e.target === ref.current && down.current === ref.current && onClose()}
+    >
       {open && (
         <div className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-6">
           <header className="mb-5 flex items-center justify-between">
@@ -420,15 +487,26 @@ export function CatIcon({ c, size = 'md' }: { c?: Category; size?: 'sm' | 'md' }
   )
 }
 
-/** Chip list of the categories of one kind. */
+/** How many transactions use each category id. */
+export const useCategoryUsage = () =>
+  useLiveQuery(async () => {
+    const n = new Map<string, number>()
+    for (const id of (await db.txs.orderBy('categoryId').keys()) as string[]) n.set(id, (n.get(id) ?? 0) + 1)
+    return n
+  })
+
+/** Chip list of the categories of one kind, most used first so the usual picks sit up front. */
 export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; value: string | null; onChange: (id: string) => void; error?: string }) {
   const { t, cats } = useApp()
+  const usage = useCategoryUsage()
   return (
     <fieldset className="grid gap-2">
       <legend className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.category}</legend>
-      <div className="flex flex-wrap gap-2">
-        {cats
+      <div className="flex min-h-9 flex-wrap gap-2">
+        {usage &&
+          cats
           .filter((c) => c.kind === kind)
+          .sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || a.name.localeCompare(b.name))
           .map((c) => {
             const on = c.id === value
             const I = c.icon ? ICONS[c.icon] : undefined
@@ -454,7 +532,7 @@ export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; v
             )
           })}
       </div>
-      {error && <span className="text-xs font-medium text-rose-700 dark:text-rose-400">{error}</span>}
+      {error && <span className="anim-fade text-xs font-medium text-rose-700 dark:text-rose-400">{error}</span>}
     </fieldset>
   )
 }
@@ -502,62 +580,156 @@ export function Switch({ checked, onChange, label, hint }: { checked: boolean; o
   )
 }
 
-/** Donut of category shares, with the ranked list below as its legend. */
-export function CategoryBars({ rows }: { rows: { id: string; amount: number; share: number }[] }) {
-  const { cat, money, t } = useApp()
-  const max = rows[0]?.amount ?? 0
-  const total = rows.reduce((n, r) => n + r.amount, 0)
-  const pct = new Intl.NumberFormat(t.locale, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 })
-  const data = rows.map((r) => ({ ...r, name: cat.get(r.id)?.name ?? '?', color: cat.get(r.id)?.color ?? '#a1a1aa' }))
+/** Text that cross-fades to a new value in place: the old one fades out as the new one fades in. */
+export function Roll({ text, className = '' }: { text: string; className?: string }) {
+  const [items, setItems] = useState([{ text, key: 0 }])
+  if (items[0].text !== text) setItems([{ text, key: items[0].key + 1 }, items[0]])
   return (
-    <div className="grid gap-6">
-      <div className="relative mx-auto aspect-square w-full max-w-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="amount"
-              nameKey="name"
-              innerRadius="64%"
-              outerRadius="100%"
-              startAngle={90}
-              endAngle={-270}
-              stroke="var(--card)"
-              strokeWidth={2}
-              isAnimationActive={false}
-            >
-              {data.map((d) => (
-                <Cell key={d.id} fill={d.color} className="outline-none" />
-              ))}
-            </Pie>
+    <span className={`inline-grid ${className}`}>
+      {items.map((it, i) => (
+        <span
+          key={it.key}
+          aria-hidden={i > 0}
+          className={`min-w-0 truncate [grid-area:1/1] ${i ? 'roll-out' : items.length > 1 ? 'roll-in' : ''}`}
+          onAnimationEnd={i ? () => setItems((xs) => xs.slice(0, 1)) : undefined}
+        >
+          {it.text}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+export interface Slice {
+  id: string
+  name: string
+  color: string
+  amount: number
+}
+
+/**
+ * Donut chart; `children` sit in the hole. Hovering a slice reports it and fades the others.
+ * The chart itself is memoized and the fading is plain CSS: re-rendering it on hover would cut its entry animation short.
+ */
+export function Donut({
+  data,
+  active,
+  onActive,
+  tooltip,
+  children,
+}: {
+  data: Slice[]
+  active?: string | null
+  onActive?: (id: string | null) => void
+  tooltip?: (d: Slice) => ReactNode
+  children: ReactNode
+}) {
+  const scope = `donut-${useId().replace(/\W/g, '')}`
+  const report = useRef(onActive)
+  const tip = useRef(tooltip)
+  useEffect(() => {
+    report.current = onActive
+    tip.current = tooltip
+  })
+  const hasTip = !!tooltip
+  const on = data.findIndex((d) => d.id === active)
+  const chart = useMemo(
+    () => (
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            dataKey="amount"
+            nameKey="name"
+            innerRadius="64%"
+            outerRadius="100%"
+            startAngle={90}
+            endAngle={-270}
+            stroke="var(--card)"
+            strokeWidth={2}
+            animationDuration={700}
+            animationEasing="ease-out"
+            onMouseEnter={(_, i) => report.current?.(data[i]?.id ?? null)}
+            onMouseLeave={() => report.current?.(null)}
+          >
+            {data.map((d, i) => (
+              <Cell key={d.id} fill={d.color} className={`slice-${i} outline-none transition-[opacity,filter] duration-200`} />
+            ))}
+          </Pie>
+          {hasTip && (
             <Tooltip
-              content={({ active, payload }) => {
-                const d = payload?.[0]?.payload as (typeof data)[number] | undefined
-                return active && d ? (
-                  <div className="rounded-lg bg-white px-3 py-2 text-sm shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">
-                    <div className="flex items-center gap-2 font-medium">
-                      <span className="size-2.5 rounded-sm" style={{ background: d.color }} aria-hidden />
-                      {d.name}
-                    </div>
-                    <div className="num mt-0.5 text-zinc-600 dark:text-zinc-400">
-                      {money(d.amount)} · {pct.format(d.share)}
-                    </div>
-                  </div>
+              wrapperStyle={{ zIndex: 10 }}
+              isAnimationActive={false}
+              content={({ active: shown, payload }) => {
+                const d = payload?.[0]?.payload as Slice | undefined
+                return shown && d ? (
+                  <div className="anim-fade rounded-lg bg-white px-3 py-2 text-sm shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">{tip.current?.(d)}</div>
                 ) : null
               }}
             />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="pointer-events-none absolute inset-0 grid place-content-center text-center">
-          <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.sum}</span>
-          <span className="num text-lg font-semibold tracking-tight">{money(total, true)}</span>
-        </div>
-      </div>
+          )}
+        </PieChart>
+      </ResponsiveContainer>
+    ),
+    [data, hasTip],
+  )
+  return (
+    <div className={`${scope} relative mx-auto aspect-square w-full max-w-56`}>
+      {on >= 0 && <style>{`.${scope} [class*="slice-"]:not(.slice-${on}) { opacity: 0.3; filter: blur(1px) }`}</style>}
+      {chart}
+      <div className="pointer-events-none absolute inset-0 grid place-content-center text-center">{children}</div>
+    </div>
+  )
+}
+
+/** Fades and slightly blurs a row while another item of its chart is hovered. */
+export const fade = (active: string | null | undefined, id: string) =>
+  `transition-[opacity,filter] duration-200 ${active && active !== id ? 'opacity-35 blur-[1px]' : ''}`
+
+/** Donut of category shares, with the ranked list below as its legend. Pass `active`/`onActive` to share the hover with other views. */
+export function CategoryBars({
+  rows,
+  active,
+  onActive,
+}: {
+  rows: { id: string; amount: number; share: number }[]
+  active?: string | null
+  onActive?: (id: string | null) => void
+}) {
+  const { cat, money, t } = useApp()
+  const [own, setOwn] = useState<string | null>(null)
+  const hover = onActive ? (active ?? null) : own
+  const setHover = onActive ?? setOwn
+  const max = rows[0]?.amount ?? 0
+  const total = rows.reduce((n, r) => n + r.amount, 0)
+  const pct = new Intl.NumberFormat(t.locale, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  const data = useMemo(() => rows.map((r) => ({ ...r, name: cat.get(r.id)?.name ?? '?', color: cat.get(r.id)?.color ?? '#a1a1aa' })), [rows, cat])
+  return (
+    <div className="grid gap-6">
+      <Donut
+        data={data}
+        active={hover}
+        onActive={setHover}
+        tooltip={(d) => (
+          <>
+            <div className="flex items-center gap-2 font-medium">
+              <span className="size-2.5 rounded-sm" style={{ background: d.color }} aria-hidden />
+              {d.name}
+            </div>
+            <div className="num mt-0.5 text-zinc-600 dark:text-zinc-400">
+              {money(d.amount)} · {pct.format(d.amount / total)}
+            </div>
+          </>
+        )}
+      >
+        <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.sum}</span>
+        <span className="num text-lg font-semibold tracking-tight">{money(total, true)}</span>
+      </Donut>
       <ul className="grid gap-3">
         {rows.map((r) => {
           const c = cat.get(r.id)
           return (
-            <li key={r.id} className="flex items-center gap-3">
+            <li key={r.id} className={`flex items-center gap-3 ${fade(hover, r.id)}`}>
               <CatIcon c={c} size="sm" />
               <div className="grid min-w-0 flex-1 gap-1.5">
                 <div className="flex items-baseline justify-between gap-3 text-sm">
@@ -567,7 +739,7 @@ export function CategoryBars({ rows }: { rows: { id: string; amount: number; sha
                     <span className="ml-2 inline-block w-14 text-right text-zinc-500 dark:text-zinc-400">{pct.format(r.share)}</span>
                   </span>
                 </div>
-                <div className="h-1.5 rounded-full" style={{ width: `${Math.max(2, (r.amount / max) * 100)}%`, background: c?.color ?? '#a1a1aa' }} />
+                <div className="anim-grow h-1.5 origin-left rounded-full" style={{ width: `${Math.max(2, (r.amount / max) * 100)}%`, background: c?.color ?? '#a1a1aa' }} />
               </div>
             </li>
           )

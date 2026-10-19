@@ -1,33 +1,25 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
-import { add, remove, sb, update } from '../cloud'
-import { BUCKETS, db, type Bucket, type Sub, type Tx } from '../db'
-import { dueDates, monthOf, parseAmount, shiftMonth, today, toInput } from '../lib'
-import { Button, CatIcon, CategoryPicker, ConfirmButton, Empty, DayOfMonthPicker, Field, inputCls, MoneyInput, PageHeader, Segmented, Sheet, Stat, useApp } from '../ui'
-
-/** Turns every subscription charge owed up to the current month into a real transaction. */
-export async function syncSubs() {
-  const current = monthOf(today())
-  for (const sub of await db.subs.toArray()) {
-    const dates = dueDates(sub.lastMonth, current, sub.day)
-    if (!dates.length) continue
-    // Claim the months on the server first: only the call that moves lastMonth on from the value it saw
-    // charges, so overlapping calls (StrictMode, focus, another device) never double-charge.
-    const claimed = await sb.from('subs').update({ last_month: current }).eq('id', sub.id).eq('last_month', sub.lastMonth).select('id')
-    if (claimed.error) throw claimed.error
-    if (!claimed.data.length) continue
-    await db.subs.update(sub.id, { lastMonth: current })
-    const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'
-    await add('txs', dates.map((date): Omit<Tx, 'id'> => ({ date, amount: sub.amount, kind: 'expense', categoryId: sub.categoryId, bucket, note: sub.name })))
-  }
-}
+import { add, remove, syncSubs, update } from '../cloud'
+import { BUCKETS, db, type Bucket, type Sub } from '../db'
+import { monthOf, parseAmount, shiftMonth, today, toInput } from '../lib'
+import { Button, CatIcon, CategoryPicker, ConfirmButton, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp } from '../ui'
 
 export function SubsPage() {
   const { t, money, cat } = useApp()
   const subs = useLiveQuery(() => db.subs.toArray())
   const [editing, setEditing] = useState<Sub | 'new' | null>(null)
+  // Hovering a slice fades the other slices and rows; hovering a row only shows that subscription's yearly price.
+  const [slice, setSlice] = useState<string | null>(null)
+  const [row, setRow] = useState<string | null>(null)
+  const hover = slice ?? row
   const total = subs?.reduce((n, s) => n + s.amount, 0) ?? 0
+  const slices = useMemo(
+    () => [...(subs ?? [])].sort((a, b) => b.amount - a.amount).map((s) => ({ id: s.id, name: s.name, amount: s.amount, color: cat.get(s.categoryId)?.color ?? '#a1a1aa' })),
+    [subs, cat],
+  )
+  const hovered = subs?.find((s) => s.id === hover)
 
   return (
     <>
@@ -43,25 +35,44 @@ export function SubsPage() {
 
       {!!subs?.length && (
         <div className="grid gap-4 lg:grid-cols-3">
-          <Stat label={t.perMonth} value={money(total)} sub={t.perYear(money(total * 12))} tone="bg-expense" />
+          <section className="grid content-start gap-6 rounded-2xl bg-white p-4 ring-1 ring-zinc-200/80 sm:p-5 dark:bg-zinc-900 dark:ring-zinc-800">
+            <div>
+              <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                <span className="size-2 rounded-full bg-expense" aria-hidden />
+                {t.perMonth}
+              </div>
+              <div className="num mt-1.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">{money(total)}</div>
+              <div className="num mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">{t.perYear(money(total * 12))}</div>
+            </div>
+            <Donut data={slices} active={slice} onActive={setSlice}>
+              <Roll text={hovered?.name ?? t.perYearLabel} className="max-w-32 justify-items-center text-xs text-zinc-600 dark:text-zinc-400" />
+              <Roll text={money((hovered?.amount ?? total) * 12, true)} className="num justify-items-center text-lg font-semibold tracking-tight" />
+            </Donut>
+          </section>
           <ul className="grid content-start rounded-2xl bg-white p-3 ring-1 ring-zinc-200/80 lg:col-span-2 dark:bg-zinc-900 dark:ring-zinc-800">
             {[...subs]
               .sort((a, b) => a.day - b.day)
               .map((s) => {
                 const c = cat.get(s.categoryId)
                 return (
-                  <li key={s.id}>
+                  <li key={s.id} className={`anim-fade-up ${fade(slice, s.id)}`}>
                     <button
                       type="button"
                       onClick={() => setEditing(s)}
-                      className="flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-zinc-800/60"
+                      onPointerEnter={() => setRow(s.id)}
+                      onPointerLeave={() => setRow(null)}
+                      onFocus={() => setRow(s.id)}
+                      onBlur={() => setRow(null)}
+                      className={`flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
+                        hover === s.id ? 'bg-zinc-50 dark:bg-zinc-800/60' : ''
+                      }`}
                     >
                       <CatIcon c={c} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{s.name}</span>
                         <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">{[c?.name, t.bucket[s.bucket ?? c?.bucket ?? 'needs'], t.chargedOn(s.day)].filter(Boolean).join(' · ')}</span>
                       </span>
-                      <span className="num shrink-0 text-sm font-semibold">{money(s.amount)}</span>
+                      <SubAmount amount={s.amount} yearly={hover === s.id} />
                     </button>
                   </li>
                 )
@@ -74,6 +85,17 @@ export function SubsPage() {
         {editing && <SubForm sub={editing === 'new' ? undefined : editing} onDone={() => setEditing(null)} />}
       </Sheet>
     </>
+  )
+}
+
+/** Monthly price that rolls over to the yearly one while its row is hovered. */
+function SubAmount({ amount, yearly }: { amount: number; yearly: boolean }) {
+  const { t, money } = useApp()
+  return (
+    <span className="grid shrink-0 justify-items-end">
+      <Roll text={money(yearly ? amount * 12 : amount)} className="num justify-items-end text-sm font-semibold" />
+      <Roll text={yearly ? t.yearShort : t.monthShort} className="justify-items-end text-xs text-zinc-500 dark:text-zinc-400" />
+    </span>
   )
 }
 
@@ -92,10 +114,9 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
     setBucket(cat.get(id)?.bucket ?? bucket)
   }
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
+  async function submit() {
     const minor = parseAmount(amount)
-    setErrors({ name: name.trim() ? undefined : t.nameRequired, amount: minor ? undefined : t.amountInvalid })
+    setErrors({ name: name.trim() ? undefined : t.nameRequired, amount: minor ? undefined : t.amountInvalid, category: categoryId ? undefined : t.categoryRequired })
     if (!name.trim() || !minor || !categoryId) return
     const data = { name: name.trim(), amount: minor, day, categoryId, bucket }
     if (sub) await update('subs', [sub.id], data)
@@ -106,7 +127,7 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-5" noValidate>
+    <Form onSubmit={submit}>
       <Field label={t.name} error={errors.name}>
         <input className={inputCls} autoFocus placeholder="Spotify, YouTube Premium…" value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -116,7 +137,7 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
         </Field>
         <DayOfMonthPicker label={t.chargeDay} value={day} onChange={setDay} format={t.chargedOn} />
       </div>
-      <CategoryPicker kind="expense" value={categoryId ?? null} onChange={pickCategory} />
+      <CategoryPicker kind="expense" value={categoryId ?? null} onChange={pickCategory} error={errors.category} />
       <div className="grid gap-2">
         <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.bucketLabel}</span>
         <Segmented label={t.bucketLabel} value={bucket} onChange={setBucket} options={BUCKETS.map((b) => ({ value: b, label: t.bucket[b] }))} />
@@ -142,6 +163,6 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
           </Button>
         </div>
       </div>
-    </form>
+    </Form>
   )
 }

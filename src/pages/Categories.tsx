@@ -1,10 +1,11 @@
-import { useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { Plus } from '@phosphor-icons/react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { add, remove, update } from '../cloud'
 import { BUCKETS, db, type Bucket, type Category, type Kind } from '../db'
 import { ICON_GROUPS } from '../icons'
 import { hexToHsv, hsvToHex } from '../lib'
-import { BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, inputCls, PageHeader, SearchInput, Segmented, Sheet, useApp } from '../ui'
+import { BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, Form, inputCls, PageHeader, SearchInput, Segmented, Sheet, useApp } from '../ui'
 
 type Editing = Category | { kind: Kind } | null
 
@@ -82,7 +83,7 @@ export function CategoriesPage() {
   )
 }
 
-const SWATCHES = ['#3b82f6', '#0ea5e9', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#d97706', '#ea580c', '#e11d48', '#db2777', '#c026d3', '#8b5cf6', '#4f46e5', '#64748b']
+export const SWATCHES = ['#3b82f6', '#0ea5e9', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#d97706', '#ea580c', '#e11d48', '#db2777', '#c026d3', '#8b5cf6', '#4f46e5', '#64748b']
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n))
 
@@ -165,7 +166,7 @@ function ColorPicker({ value, onChange, preview }: { value: string; onChange: (h
       </div>
 
       {open && (
-        <div className="grid gap-3 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
+        <div className="anim-pop grid gap-3 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
           <div
             role="slider"
             tabIndex={0}
@@ -241,7 +242,7 @@ function ColorPicker({ value, onChange, preview }: { value: string; onChange: (h
 }
 
 function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind }; onDone: () => void }) {
-  const { t } = useApp()
+  const { t, cats } = useApp()
   const existing = 'id' in editing ? editing : undefined
   const [name, setName] = useState(existing?.name ?? '')
   const [color, setColor] = useState(existing?.color ?? SWATCHES[0])
@@ -249,8 +250,7 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
   const [icon, setIcon] = useState(existing?.icon ?? 'Tag')
   const [error, setError] = useState<string>()
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
+  async function submit() {
     if (!name.trim()) return setError(t.nameRequired)
     const data = { name: name.trim(), color, bucket, icon, kind: editing.kind }
     if (existing) await update('categories', [existing.id], data)
@@ -258,16 +258,32 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
     onDone()
   }
 
+  const used = useLiveQuery(
+    async () => (existing ? (await db.txs.where('categoryId').equals(existing.id).count()) + (await db.subs.where('categoryId').equals(existing.id).count()) : 0),
+    [existing?.id],
+    0,
+  )
+
   async function removeCategory() {
-    const used =
-      (await db.txs.where('categoryId').equals(existing!.id).count()) + (await db.subs.where('categoryId').equals(existing!.id).count())
-    if (used) return setError(t.categoryInUse(used))
-    await remove('categories', [existing!.id])
+    const old = existing!
+    const txIds = await db.txs.where('categoryId').equals(old.id).primaryKeys()
+    const subs = await db.subs.where('categoryId').equals(old.id).toArray()
+    if (txIds.length || subs.length) {
+      // category_id stays required in the schema, so orphans move to a shared "Uncategorized" category rather than null.
+      const home =
+        cats.find((c) => c.kind === old.kind && c.name === t.uncategorized && c.id !== old.id) ??
+        (await add('categories', [{ name: t.uncategorized, color: '#a1a1aa', kind: old.kind, bucket: old.bucket, icon: 'DotsThree' }]))[0]
+      await update('txs', txIds, { categoryId: home.id })
+      // Subscriptions without their own bucket used the old category's: pin it so they stay where they were.
+      await update('subs', subs.filter((s) => s.bucket).map((s) => s.id), { categoryId: home.id })
+      await update('subs', subs.filter((s) => !s.bucket).map((s) => s.id), { categoryId: home.id, bucket: old.bucket })
+    }
+    await remove('categories', [old.id])
     onDone()
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-5" noValidate>
+    <Form onSubmit={submit}>
       <Field label={t.name} error={error}>
         <input className={inputCls} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -293,6 +309,8 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
         </div>
       )}
 
+      {used > 0 && <p className="anim-fade text-xs text-zinc-600 dark:text-zinc-400">{t.categoryDeleteHint(used)}</p>}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         {existing ? <ConfirmButton label={t.delete} onConfirm={removeCategory} /> : <span />}
         <div className="flex gap-2">
@@ -304,7 +322,7 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
           </Button>
         </div>
       </div>
-    </form>
+    </Form>
   )
 }
 

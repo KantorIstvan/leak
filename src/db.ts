@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
+import { isDay } from './lib'
 
 export type Bucket = 'needs' | 'wants' | 'investments'
 export type Kind = 'income' | 'expense'
@@ -116,11 +117,6 @@ db.version(1).stores({
   settings: 'id',
 })
 
-// Stamp every new tx (form, subscriptions, demo); imported ones keep theirs.
-db.txs.hook('creating', (_, tx) => {
-  tx.createdAt ??= Date.now()
-})
-
 // --- Backup ---------------------------------------------------------------
 
 export interface Backup {
@@ -154,34 +150,84 @@ export const emptyBackup = (): Backup => ({
   settings: [DEFAULT_SETTINGS],
 })
 
+type Check = (v: unknown) => boolean
+const text: Check = (v) => typeof v === 'string'
+const money: Check = (v) => Number.isSafeInteger(v) && (v as number) >= 0
+const kind: Check = (v) => v === 'income' || v === 'expense'
+const bucket: Check = (v) => BUCKETS.includes(v as Bucket)
+const oneOf = (...xs: unknown[]): Check => (v) => xs.includes(v)
+const absent = (check: Check): Check => (v) => v === undefined || check(v) // missing: the server fills in its default
+const nullable = (check: Check): Check => (v) => v == null || check(v)
+
+/**
+ * What the server accepts in each stored field (ids and category links are checked by rekey). A backup is checked
+ * in full before anything is deleted: one bad value would otherwise stop the upload halfway, with the old data gone.
+ */
+const FIELDS: Record<'categories' | 'txs' | 'goals' | 'subs' | 'settings', Record<string, Check>> = {
+  categories: { name: text, color: (v) => text(v) && /^#[\da-f]{6}$/i.test(v as string), kind, bucket, icon: nullable(text) },
+  txs: { date: isDay, amount: money, kind, bucket: nullable(bucket), note: absent(text), createdAt: absent(Number.isFinite) },
+  goals: { name: text, target: money, saved: money },
+  subs: {
+    name: text,
+    amount: money,
+    bucket: nullable(bucket),
+    day: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 31,
+    lastMonth: (v) => text(v) && /^\d{4}-\d{2}$/.test(v as string),
+  },
+  settings: {
+    lang: oneOf('hu', 'en'),
+    currency: (v) => text(v) && /^[A-Z]{3}$/.test(v as string),
+    theme: oneOf('system', 'light', 'dark'),
+    clock: nullable(oneOf('12', '24')),
+    colorblind: absent((v) => typeof v === 'boolean'),
+    ratios: (v) => {
+      const r = (v ?? {}) as Record<Bucket, number>
+      return BUCKETS.every((b) => Number.isInteger(r[b]) && r[b] >= 0) && BUCKETS.reduce((n, b) => n + r[b], 0) === 100
+    },
+  },
+}
+
+/** The rows of one table with only the fields the server knows (it rejects any other); throws if a value is invalid. */
+function rows(raw: unknown, table: keyof typeof FIELDS, ...keep: string[]) {
+  const fields = FIELDS[table]
+  const keys = [...keep, ...Object.keys(fields)]
+  if (!Array.isArray(raw)) throw new Error(`invalid backup: ${table}`)
+  return raw.map((r: Record<string, unknown>) => {
+    if (!r || typeof r !== 'object' || !Object.entries(fields).every(([k, ok]) => ok(r[k]))) throw new Error(`invalid backup: ${table}`)
+    return Object.fromEntries(keys.filter((k) => r[k] !== undefined).map((k) => [k, r[k]]))
+  })
+}
+
 /**
  * Checks a backup and gives every row a fresh uuid, keeping category references intact,
- * so files from the pre-cloud app (numeric ids) import too. Throws if it is not a Leak backup.
+ * so files from the pre-cloud app (numeric ids) import too. Throws if it is not a valid Leak backup.
  */
 export function rekey(raw: unknown): Backup {
-  const b = raw as Partial<Backup>
-  const ok =
-    b?.app === 'leak' &&
-    b.version === 1 &&
-    [b.txs, b.categories, b.goals, b.settings].every(Array.isArray) &&
-    b.txs!.every((t) => Number.isInteger(t.amount) && /^\d{4}-\d{2}-\d{2}$/.test(t.date))
-  if (!ok) throw new Error('invalid backup')
-  const subs = Array.isArray(b.subs) ? b.subs : []
-  const ids = new Map(b.categories!.map((c) => [c.id, crypto.randomUUID()]))
-  if (![...b.txs!, ...subs].every((r) => ids.has(r.categoryId))) throw new Error('invalid backup')
+  const b = raw as Record<string, unknown> | null
+  if (b?.app !== 'leak' || b.version !== 1) throw new Error('invalid backup')
+  const categories = rows(b.categories, 'categories', 'id')
+  const txs = rows(b.txs, 'txs', 'categoryId')
+  const subs = rows(b.subs ?? [], 'subs', 'categoryId') // missing in backups made before subscriptions existed
+  const ids = new Map(categories.map((c) => [c.id, crypto.randomUUID()]))
+  if (ids.size !== categories.length || ![...txs, ...subs].every((r) => ids.has(r.categoryId))) throw new Error('invalid backup: categories')
 
-  const fresh = <T,>(r: T) => ({ ...r, id: crypto.randomUUID() })
-  const relink = <T extends { categoryId: string }>(r: T) => ({ ...fresh(r), categoryId: ids.get(r.categoryId)! })
+  const relink = (r: Record<string, unknown>) => ({ ...r, id: crypto.randomUUID(), categoryId: ids.get(r.categoryId)! })
   return {
     app: 'leak',
     version: 1,
     // Categories made before icons existed get their default one, as the old v3 upgrade did.
-    categories: b.categories!.map((c) => ({ ...c, id: ids.get(c.id)!, icon: c.icon ?? DEFAULT_CATEGORIES.find((d) => d.name === c.name)?.icon })),
-    txs: b.txs!.map(relink),
-    goals: b.goals!.map(fresh),
-    subs: subs.map(relink),
-    settings: b.settings!.length ? b.settings! : [DEFAULT_SETTINGS],
+    categories: categories.map((c) => ({ ...c, id: ids.get(c.id)!, icon: c.icon ?? DEFAULT_CATEGORIES.find((d) => d.name === c.name)?.icon })) as Category[],
+    txs: txs.map(relink) as Tx[],
+    goals: rows(b.goals, 'goals').map((g) => ({ ...g, id: crypto.randomUUID() })) as Goal[],
+    subs: subs.map(relink) as Sub[],
+    settings: [{ ...(rows(b.settings, 'settings')[0] ?? DEFAULT_SETTINGS), id: 'app' } as Settings],
   }
+}
+
+/** This device's copy of the signed-in account's data, or null if it holds none. */
+export async function mirrorBackup() {
+  const b = await exportBackup()
+  return b.categories.length ? b : null
 }
 
 /** This device's pre-cloud database as a backup, or null if it never had any data. */
