@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { SignInButton, useAuth } from '@clerk/react'
+import { AuthenticateWithRedirectCallback, SignInButton, useAuth } from '@clerk/react'
 import { ArrowsClockwise, CalendarBlank, ChartBar, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { finishSso } from './clerk'
 import { clearLocal, pull, setToken, start } from './cloud'
@@ -79,6 +79,9 @@ export default function App() {
   }, [isLoaded, isSignedIn, getToken])
 
   if (!isLoaded || finishing || (isSignedIn && !synced)) return null
+  // A Google/GitHub account with no Leak user yet comes back unfinished, to #/sso-callback and without a nonce:
+  // Clerk's own callback turns that sign-in into a sign-up. Finished sign-ins come back with the nonce (above).
+  if (!isSignedIn && location.hash.startsWith('#/sso-callback')) return <AuthenticateWithRedirectCallback />
   return isSignedIn ? <Main /> : <SignedOut />
 }
 
