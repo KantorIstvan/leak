@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src-tauri/icons/128x128@2x.png" width="96" alt="Leak icon">
+<img src="src-tauri/icons/128x128@2x.png" width="88" alt="Leak icon">
 
 # Leak
 
@@ -16,56 +16,105 @@
 
 <br>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/month-dark.webp">
+  <img src="docs/screenshots/month-light.webp" alt="Month view: what's left, income, expenses, the budget split per bucket, spending by category and the month's transactions">
+</picture>
+
 ## How it works
 
-Every month your income is split into three buckets, and Leak shows how your spending tracks against that plan.
+Every month your income is split into **Needs** (rent, groceries, bills), **Wants** (eating out, games, travel) and
+**Investments**, and Leak shows how your spending tracks against that plan. The split starts at 50/30/20 and is yours to
+change: drag the handles or pick a preset.
 
-| Needs | Wants | Investments |
-|:---:|:---:|:---:|
-| **50%** | **30%** | **20%** |
-| Rent, groceries, bills | Eating out, games, travel | Savings and investing |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/split-dark.webp">
+  <img src="docs/screenshots/split-light.webp" alt="Budget split setting: a bar divided into Needs 50%, Wants 30% and Investments 20% with drag handles and presets">
+</picture>
 
-The split is yours to change: drag the handles in Settings or pick a preset.
-
-Leak is a desktop app for Windows, macOS and Linux, built with Tauri, and it works on small screens too. Sign in with
-Google, GitHub or an email code and your data syncs to your account, so it survives a lost or broken computer.
+Leak is a desktop app for Windows, macOS and Linux. Sign in with Google, GitHub or an email code and your data syncs
+to your account, so it survives a lost or broken computer.
 
 ## Features
+
+**The year at a glance.** Income vs expenses for every month, a month-by-month table with averages and totals, and a
+breakdown by category.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/year-dark.webp">
+  <img src="docs/screenshots/year-light.webp" alt="Year view: yearly income, expenses, profit and average monthly spend above an income vs expenses bar chart">
+</picture>
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-**Track**
+**Subscriptions**<br>
+Monthly charges like Spotify or your phone plan are added to every month automatically.
 
-- Monthly view: income, expenses, what's left, and a live budget split per bucket
-- Yearly view: income vs expenses chart, month-by-month table with averages and totals, category breakdown
-- Search, filters and bulk edit for transactions
-- Subscriptions, added to every month automatically
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/subs-dark.webp">
+  <img src="docs/screenshots/subs-light.webp" alt="Subscriptions page: monthly and yearly total with a donut chart, and the list of subscriptions">
+</picture>
 
 </td>
 <td width="50%" valign="top">
 
-**Plan**
+**Saving goals**<br>
+What you are saving for, and about how many months are left at your current pace.
 
-- Adjustable budget split, 50/30/20 by default
-- Saving goals with an estimate of how many months are left at your current pace
-- Categories for income and expenses, each with an icon and a default bucket
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/goals-dark.webp">
+  <img src="docs/screenshots/goals-light.webp" alt="Saving goals page: three goals with progress bars and months-to-go estimates">
+</picture>
 
 </td>
 </tr>
+</table>
+
+**Categories with icons.** Every category has a default bucket, and all of them are yours to rename, recolour or
+delete.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/categories-dark.webp">
+  <img src="docs/screenshots/categories-light.webp" alt="Categories page: expense categories grouped into Needs, Wants and Investments, and income categories, each with an icon">
+</picture>
+
+**Works on small screens too.**
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/mobile-month-dark.webp">
+    <img src="docs/screenshots/mobile-month-light.webp" width="30%" alt="Month view on a phone-sized screen">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/mobile-year-dark.webp">
+    <img src="docs/screenshots/mobile-year-light.webp" width="30%" alt="Year view on a phone-sized screen">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/mobile-subs-dark.webp">
+    <img src="docs/screenshots/mobile-subs-light.webp" width="30%" alt="Subscriptions on a phone-sized screen">
+  </picture>
+</p>
+
+**And the rest**
+
+<table>
 <tr>
-<td valign="top">
+<td width="50%" valign="top">
 
 **Your data**
 
 - Syncs across devices after signing in
 - The last synced data stays readable offline
+- Search, filters and bulk edit for transactions
 - CSV import and export, also from other apps
 - JSON backup export and import
 
 </td>
-<td valign="top">
+<td width="50%" valign="top">
 
 **Make it yours**
 
@@ -176,6 +225,7 @@ src/
 └── pages/          Month, Year, Subscriptions, Goals, Categories, Settings
 src-tauri/          desktop shell (Rust)
 supabase/           database schema
+docs/screenshots/   README images
 ```
 
 ## License
