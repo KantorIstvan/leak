@@ -33,7 +33,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
           onMouseLeave={() => setHoverMonth(null)}
         >
           <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-          <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: 'var(--chart-ink)', fontSize: 12 }} interval={0} />
+          <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: 'var(--chart-ink)', fontSize: 12 }} interval="equidistantPreserveStart" />
           <YAxis tickLine={false} axisLine={false} width={64} tick={{ fill: 'var(--chart-ink)', fontSize: 12 }} tickFormatter={(v: number) => money(v * 100, true)} />
           <Tooltip
             cursor={{ fill: 'var(--chart-grid)', opacity: 0.5, className: 'cursor-pointer' }}
