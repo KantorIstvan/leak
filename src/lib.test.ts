@@ -36,8 +36,13 @@ describe('formatMoney', () => {
 
 describe('dueDates', () => {
   it('fills every missed month and clamps the day', () => {
-    expect(dueDates('2025-12', '2026-02', 31)).toEqual(['2026-01-31', '2026-02-28'])
-    expect(dueDates('2026-02', '2026-02', 5)).toEqual([])
+    expect(dueDates('2025-12', '2026-02-28', 31)).toEqual(['2026-01-31', '2026-02-28'])
+    expect(dueDates('2026-02', '2026-02-28', 5)).toEqual([])
+  })
+  it('waits for the charge day', () => {
+    expect(dueDates('2026-09', '2026-10-18', 19)).toEqual([])
+    expect(dueDates('2026-09', '2026-10-19', 19)).toEqual(['2026-10-19'])
+    expect(dueDates('2026-08', '2026-10-18', 19)).toEqual(['2026-09-19'])
   })
 })
 

@@ -168,8 +168,8 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
   useTheme(settings?.theme)
-  // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open into
-  // a new month (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
+  // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open past
+  // a charge day (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
   // the window and loop.
   useEffect(() => {
     if (clerkDown) return

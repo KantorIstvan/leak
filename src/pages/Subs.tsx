@@ -120,7 +120,7 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
     if (!name.trim() || !minor || !categoryId) return
     const data = { name: name.trim(), amount: minor, day, categoryId, bucket }
     if (sub) await update('subs', [sub.id], data)
-    // A new subscription is charged starting this month.
+    // A new subscription is charged starting this month, once its day has come.
     else await add('subs', [{ ...data, lastMonth: shiftMonth(monthOf(today()), -1) }])
     await syncSubs()
     onDone()
