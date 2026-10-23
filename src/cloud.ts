@@ -221,9 +221,9 @@ export async function chargeId(subId: string, month: string) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-/** Turns every subscription charge owed up to the current month into a real transaction. */
+/** Turns every subscription charge whose day has come into a real transaction. */
 export async function syncSubs() {
-  const current = monthOf(today())
+  const current = today()
   for (const local of await db.subs.toArray()) {
     if (!dueDates(local.lastMonth, current, local.day).length) continue
     // Decided on the server's copy: this device's may be days old, and a charge deleted since must not come back.
@@ -239,7 +239,7 @@ export async function syncSubs() {
     // Charges before the month moves on: if this stops in between, the next run redoes it, and the fixed ids
     // keep that (or another device doing the same) from charging twice.
     await addOnce('txs', charges)
-    await update('subs', [sub.id], { lastMonth: current })
+    await update('subs', [sub.id], { lastMonth: monthOf(dates[dates.length - 1]) })
   }
 }
 

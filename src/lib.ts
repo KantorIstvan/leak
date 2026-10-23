@@ -94,12 +94,13 @@ export function shiftMonth(month: string, delta: number) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-/** Charge dates owed by a subscription: one per month after `lastMonth` up to `current`, day clamped to month length. */
-export function dueDates(lastMonth: string, current: string, day: number) {
+/** Charge dates owed by a subscription: one per month after `lastMonth` whose day has come by `today`, day clamped to month length. */
+export function dueDates(lastMonth: string, today: string, day: number) {
   const dates: string[] = []
-  for (let m = shiftMonth(lastMonth, 1); m <= current; m = shiftMonth(m, 1)) {
+  for (let m = shiftMonth(lastMonth, 1); m <= monthOf(today); m = shiftMonth(m, 1)) {
     const [y, mo] = m.split('-').map(Number)
-    dates.push(`${m}-${String(Math.min(day, new Date(y, mo, 0).getDate())).padStart(2, '0')}`)
+    const date = `${m}-${String(Math.min(day, new Date(y, mo, 0).getDate())).padStart(2, '0')}`
+    if (date <= today) dates.push(date)
   }
   return dates
 }
