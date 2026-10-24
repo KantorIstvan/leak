@@ -388,10 +388,10 @@ export const filterCount = (q: TxQuery) =>
   [q.kind !== 'all', q.buckets.length, q.categories.length, q.min !== null, q.max !== null, q.from, q.to].filter(Boolean).length
 
 /** Lowercase, accents stripped: "Kávé" matches "kave". */
-const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+export const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
 
 /**
- * Filters and sorts transactions. Text matches the note, the category name, or the amount
+ * Filters and sorts transactions. Text matches the note, the category name, a #tag, or the amount
  * ("4700", "4 700" and "4700,5" all find 4 700).
  */
 export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: string) => string): Tx[] {
@@ -401,7 +401,7 @@ export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: string) => string)
   const hit = (tx: Tx) => {
     if (!words.length) return true
     if (isNumber && String(tx.amount / 100).startsWith(digits)) return true
-    const hay = fold(`${tx.note} ${catName(tx.categoryId)}`)
+    const hay = fold(`${tx.note} ${catName(tx.categoryId)} ${(tx.tags ?? []).map((g) => `#${g}`).join(' ')}`)
     return words.every((w) => hay.includes(w))
   }
   const list = txs.filter(
@@ -426,6 +426,78 @@ export function queryTxs(txs: Tx[], q: TxQuery, catName: (id: string) => string)
     note: (a, b) => (a.note || catName(a.categoryId)).localeCompare(b.note || catName(b.categoryId)) || byDate(a, b),
   }
   return list.sort(sorts[q.sort])
+}
+
+/** A tag as typed -> as stored: "#Balaton 2026 " -> "balaton-2026". Empty if nothing is left. */
+export const cleanTag = (raw: string) => raw.trim().replace(/^#+/, '').trim().toLowerCase().replace(/\s+/g, '-')
+
+/** Tags compare accent-folded: "nyaralás" and "nyaralas" are one tag. */
+export const sameTag = (a: string, b: string) => fold(a) === fold(b)
+
+/** The tags used in `txs`, the most spent on first (then the most used), each as first written. */
+export function tagTotals(txs: Tx[]) {
+  const by = new Map<string, { tag: string; amount: number; count: number }>()
+  for (const tx of txs)
+    for (const tag of tx.tags ?? []) {
+      const s = by.get(fold(tag)) ?? by.set(fold(tag), { tag, amount: 0, count: 0 }).get(fold(tag))!
+      s.count++
+      if (tx.kind === 'expense') s.amount += tx.amount
+    }
+  return [...by.values()].sort((a, b) => b.amount - a.amount || b.count - a.count || a.tag.localeCompare(b.tag))
+}
+
+// --- Subscriptions --------------------------------------------------------
+
+/** A subscription is up for "still using it?" a year after it was last confirmed, or after a year of charges if never. */
+export const reviewDue = (reviewed: string | null | undefined, month: string, chargedYearAgo: boolean) =>
+  reviewed ? reviewed <= shiftMonth(month, -12) : chargedYearAgo
+
+// --- Year recap -----------------------------------------------------------
+
+export interface Recap {
+  income: number
+  saved: number // income minus needs and wants, as the score counts it
+  hit: number // months that reached their savings target
+  counted: number // months with income
+  top?: { id: string; amount: number; share: number } // the category spent on most
+  regular?: { note: string; count: number; amount: number } // the expense logged most often
+  tag?: { tag: string; amount: number; count: number }
+}
+
+/** What a year came to, for the recap on the year page. */
+export function yearRecap(txs: Tx[], year: number, ratiosAt: (month: string) => Record<Bucket, number>): Recap {
+  const months = byMonth(txs, year)
+  const sum = summarize(txs)
+  const key = (i: number) => `${year}-${String(i + 1).padStart(2, '0')}`
+  const withIncome = months.map((s, i) => [s, key(i)] as const).filter(([s]) => s.income > 0)
+  const hit = withIncome.filter(([s, m]) => (s.income - s.buckets.needs - s.buckets.wants) * 100 >= s.income * ratiosAt(m).investments).length
+
+  const spent = txs.filter((t) => t.kind === 'expense')
+  const cats = new Map<string, number>()
+  for (const t of spent) cats.set(t.categoryId, (cats.get(t.categoryId) ?? 0) + t.amount)
+  const [topId, topAmount] = [...cats].sort((a, b) => b[1] - a[1])[0] ?? []
+
+  // Notes compared folded, shown as last written: "lidl" and "Lidl" are the same shop.
+  const notes = new Map<string, { note: string; count: number; amount: number }>()
+  for (const t of spent) {
+    const k = fold(t.note.trim())
+    if (!k) continue
+    const n = notes.get(k) ?? notes.set(k, { note: '', count: 0, amount: 0 }).get(k)!
+    n.note = t.note.trim()
+    n.count++
+    n.amount += t.amount
+  }
+  const regular = [...notes.values()].sort((a, b) => b.count - a.count || b.amount - a.amount)[0]
+
+  return {
+    income: sum.income,
+    saved: sum.income - sum.buckets.needs - sum.buckets.wants,
+    hit,
+    counted: withIncome.length,
+    top: topId === undefined ? undefined : { id: topId, amount: topAmount, share: topAmount / sum.expense },
+    regular: regular && regular.count >= 3 ? regular : undefined,
+    tag: tagTotals(txs).find((x) => x.amount > 0),
+  }
 }
 
 /**

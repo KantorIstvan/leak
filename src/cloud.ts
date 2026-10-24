@@ -3,6 +3,7 @@
 import { createClient } from '@supabase/supabase-js'
 import Dexie from 'dexie'
 import { BUCKETS, db, DEFAULT_SETTINGS, emptyBackup, legacyBackup, mirrorBackup, rekey, type Backup, type Settings, type Sub, type Tx } from './db'
+import { convert, rate } from './fx'
 import { dueDates, monthOf, today, withRatioChange } from './lib'
 
 let token: () => Promise<string | null> = async () => null
@@ -24,7 +25,15 @@ type Table = 'categories' | 'txs' | 'goals' | 'subs'
 const TABLES: Table[] = ['categories', 'txs', 'goals', 'subs'] // parents first, for inserts
 
 // The app's camelCase fields <-> the schema's snake_case columns.
-const COLS: Record<string, string> = { categoryId: 'category_id', lastMonth: 'last_month', createdAt: 'created_at', ratioHistory: 'ratio_history' }
+const COLS: Record<string, string> = {
+  categoryId: 'category_id',
+  lastMonth: 'last_month',
+  createdAt: 'created_at',
+  ratioHistory: 'ratio_history',
+  origAmount: 'orig_amount',
+  origCurrency: 'orig_currency',
+  limit: 'monthly_limit',
+}
 const FIELDS = Object.fromEntries(Object.entries(COLS).map(([k, v]) => [v, k]))
 
 export const toRow = (o: object) =>
@@ -58,12 +67,37 @@ const chunks = <T,>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.len
 const pulling = new Set<Set<string>>()
 const touch = (table: string, ids: string[]) => pulling.forEach((s) => ids.forEach((id) => s.add(`${table}/${id}`)))
 
+type Row = { id: string } & Record<string, unknown>
+
+/** Inserts rows under the ids they carry. */
+async function insert(table: Table, rows: Row[]) {
+  for (const c of chunks(rows, 500)) ok(await sb.from(table).insert(c.map(toRow)))
+  touch(table, rows.map((r) => r.id))
+  await db.table(table).bulkPut(rows)
+}
+
+async function patch(table: Table, ids: string[], changes: object) {
+  const row = toRow(changes)
+  if (!ids.length || !Object.keys(row).length) return // nothing to send
+  for (const c of chunks(ids, 100)) ok(await sb.from(table).update(row).in('id', c))
+  touch(table, ids)
+  await db.table(table).bulkUpdate(ids.map((key) => ({ key, changes })))
+}
+
+async function drop(table: Table, ids: string[]) {
+  if (!ids.length) return
+  for (const c of chunks(ids, 100)) ok(await sb.from(table).delete().in('id', c))
+  touch(table, ids)
+  await db.table(table).bulkDelete(ids)
+}
+
+// add, update and remove are what the screens call: each also lands in the undo history.
+
 export async function add<T extends object>(table: Table, rows: T[]) {
   // Stamped here rather than by the server, so the server and the mirror hold the same time.
   const withIds = rows.map((r) => ({ ...(table === 'txs' && { createdAt: Date.now() }), ...r, id: crypto.randomUUID() }))
-  for (const c of chunks(withIds, 500)) ok(await sb.from(table).insert(c.map(toRow)))
-  touch(table, withIds.map((r) => r.id))
-  await db.table(table).bulkAdd(withIds)
+  await insert(table, withIds)
+  if (rows.length) record({ t: 'add', table, rows: withIds }, { what: 'add', table, n: rows.length })
   return withIds
 }
 
@@ -75,38 +109,182 @@ async function addOnce(table: Table, rows: { id: string }[]) {
   const fresh = rows.filter((r) => made.has(r.id))
   touch(table, fresh.map((r) => r.id))
   await db.table(table).bulkPut(fresh)
+  return fresh
 }
 
 export async function update(table: Table, ids: string[], changes: object) {
-  const row = toRow(changes)
-  if (!ids.length || !Object.keys(row).length) return // nothing to send
-  for (const c of chunks(ids, 100)) ok(await sb.from(table).update(row).in('id', c))
-  touch(table, ids)
-  await db.table(table).bulkUpdate(ids.map((key) => ({ key, changes })))
+  if (!ids.length || !Object.keys(toRow(changes)).length) return
+  // What the changed fields held, read before the write; a field the row lacked goes back to null.
+  const old = (await db.table(table).bulkGet(ids)) as (Row | undefined)[]
+  const keys = Object.entries(changes).filter(([, v]) => v !== undefined).map(([k]) => k)
+  await patch(table, ids, changes)
+  const rows = old.filter((r) => r !== undefined).map((r) => ({ id: r.id, before: Object.fromEntries(keys.map((k) => [k, r[k] ?? null])), after: changes }))
+  record({ t: 'update', table, rows }, { what: 'edit', table, n: ids.length })
 }
 
 export async function remove(table: Table, ids: string[]) {
   if (!ids.length) return
-  for (const c of chunks(ids, 100)) ok(await sb.from(table).delete().in('id', c))
-  touch(table, ids)
-  await db.table(table).bulkDelete(ids)
+  const rows = ((await db.table(table).bulkGet(ids)) as (Row | undefined)[]).filter((r) => r !== undefined)
+  await drop(table, ids)
+  record({ t: 'remove', table, rows }, { what: 'delete', table, n: ids.length })
 }
 
 // One settings write at a time, each on top of the one before: two quick changes must not undo each other.
 let settingsSaved: Promise<unknown> = Promise.resolve()
 export function saveSettings(p: Partial<Settings>) {
-  const run = settingsSaved.then(async () => {
+  return putSettings(async () => {
     const cur = { ...DEFAULT_SETTINGS, ...(await db.settings.get('app')) }
     const next = { ...cur, ...p }
     // A new split applies from this month on; months before it keep the one they were planned with.
     if (p.ratios && BUCKETS.some((b) => p.ratios![b] !== cur.ratios[b])) next.ratioHistory = withRatioChange(cur.ratios, cur.ratioHistory, monthOf(today()))
-    ok(await sb.from('settings').upsert(settingsRow(next)))
+    return [cur, next]
+  })
+}
+
+/** Queues a settings write: `make` runs on its turn and returns the settings before and after; the after is saved. */
+function putSettings(make: () => Promise<[Settings, Settings]>, recorded = true) {
+  const run = settingsSaved.then(async () => {
+    const [before, after] = await make()
+    ok(await sb.from('settings').upsert(settingsRow(after)))
     touch('settings', ['app'])
-    await db.settings.put(next)
+    await db.settings.put(after)
+    if (recorded) record({ t: 'settings', before, after }, { what: 'settings', n: 1 })
   })
   settingsSaved = run.catch(() => {})
   // A fresh promise: the catch above marks `run` itself handled, and a failed save must still reach main.tsx's alert.
   return run.then()
+}
+
+// --- Undo / redo ----------------------------------------------------------
+// Every write the screens make is kept as an op that knows its opposite. Undo runs the opposites of a step's ops,
+// last first; redo runs the ops again. Rows come back under their old ids, so the links between them hold.
+
+export type Op =
+  | { t: 'add' | 'remove'; table: Table; rows: Row[] }
+  | { t: 'update'; table: Table; rows: { id: string; before: object; after: object }[] }
+  | { t: 'settings'; before: Settings; after: Settings }
+
+/** What a step did, for "Undo: …" (i18n.ts words it). */
+export interface StepLabel {
+  what: 'add' | 'edit' | 'delete' | 'settings' | 'import'
+  table?: Table
+  n: number
+}
+
+interface Step {
+  label: StepLabel
+  ops: Op[]
+  at: number
+}
+
+export const inverse = (op: Op): Op =>
+  op.t === 'settings'
+    ? { ...op, before: op.after, after: op.before }
+    : op.t === 'update'
+      ? { ...op, rows: op.rows.map((r) => ({ id: r.id, before: r.after, after: r.before })) }
+      : { ...op, t: op.t === 'add' ? 'remove' : 'add' }
+
+async function apply(op: Op) {
+  if (op.t === 'settings') return putSettings(async () => [op.before, op.after], false)
+  if (op.t !== 'update') return op.t === 'add' ? insert(op.table, op.rows) : drop(op.table, op.rows.map((r) => r.id))
+  // Rows that get the same values share one request.
+  const groups = new Map<string, { changes: object; ids: string[] }>()
+  for (const r of op.rows) {
+    const key = JSON.stringify(r.after)
+    if (!groups.has(key)) groups.set(key, { changes: r.after, ids: [] })
+    groups.get(key)!.ids.push(r.id)
+  }
+  for (const g of groups.values()) await patch(op.table, g.ids, g.changes)
+}
+
+const HISTORY_MAX = 100
+const undos: Step[] = []
+const redos: Step[] = []
+let open: Step | null = null // the step an undoable() call is gathering
+
+function record(op: Op, label: StepLabel) {
+  if (open) return void open.ops.push(op)
+  const top = undos[undos.length - 1]
+  const now = Date.now()
+  // A slider dragged or colours picked in quick succession undo in one go.
+  if (op.t === 'settings' && top?.label.what === 'settings' && now - top.at < 1500 && !redos.length) {
+    ;(top.ops[0] as Extract<Op, { t: 'settings' }>).after = op.after
+    top.at = now
+    return
+  }
+  push({ label, ops: [op], at: now })
+}
+
+function push(step: Step) {
+  undos.push(step)
+  if (undos.length > HISTORY_MAX) undos.shift()
+  redos.length = 0
+  changed({ kind: 'did', label: step.label })
+}
+
+/** Runs several writes as one undo step (deleting a category also moves its transactions). */
+// ponytail: one module-wide open step, so a write elsewhere meanwhile joins it; give each call its own if that bites.
+export async function undoable<T>(label: StepLabel, run: () => Promise<T>) {
+  const step: Step = { label, ops: [], at: 0 }
+  open = step
+  try {
+    return await run()
+  } finally {
+    open = null
+    // What got done before a failure did happen, so it can be undone too.
+    if (step.ops.length) push({ ...step, at: Date.now() })
+  }
+}
+
+let moving: Promise<unknown> = Promise.resolve()
+const queue = (from: Step[], to: Step[], kind: 'undo' | 'redo') => {
+  const run = moving.then(() => move(from, to, kind))
+  moving = run.catch(() => {})
+  return run
+}
+
+/** Undoes the newest step. Presses quicker than the server answers queue up. */
+export const undo = () => queue(undos, redos, 'undo')
+export const redo = () => queue(redos, undos, 'redo')
+
+// ponytail: the history only knows this device's writes. An edit from another device in between can make an undo
+// fail (the alert says so) or bring an older value back; diff against the server first if that ever matters.
+async function move(from: Step[], to: Step[], kind: 'undo' | 'redo') {
+  const step = from.pop()
+  if (!step) return
+  try {
+    for (const op of kind === 'undo' ? step.ops.toReversed().map(inverse) : step.ops) await apply(op)
+  } catch (e) {
+    // Part of the step may be done: neither stack describes the data any more.
+    clearHistory()
+    throw e
+  }
+  to.push(step)
+  changed({ kind, label: step.label })
+}
+
+export function clearHistory() {
+  undos.length = 0
+  redos.length = 0
+  changed(null)
+}
+
+type Happened = { kind: 'did' | 'undo' | 'redo'; label: StepLabel; seq: number }
+let seq = 0
+let snapshot: { undo: StepLabel | null; redo: StepLabel | null; last: Happened | null } = { undo: null, redo: null, last: null }
+const historyWatchers = new Set<() => void>()
+function changed(what: Omit<Happened, 'seq'> | null) {
+  snapshot = { undo: undos.at(-1)?.label ?? null, redo: redos.at(-1)?.label ?? null, last: what ? { ...what, seq: ++seq } : snapshot.last }
+  historyWatchers.forEach((w) => w())
+}
+
+/** For useSyncExternalStore: what undo and redo would do now, and the last thing that happened. */
+export const history = {
+  subscribe(w: () => void) {
+    historyWatchers.add(w)
+    return () => void historyWatchers.delete(w)
+  },
+  get: () => snapshot,
 }
 
 async function fetchAll(table: Table | 'settings') {
@@ -202,6 +380,7 @@ async function setUp() {
 export async function replaceAll(b: Backup) {
   if (replacing) throw new Error('A replace is already running')
   replacing = true
+  clearHistory() // every row gets a new id: nothing in the history exists any more
   try {
     ok(await sb.from('settings').delete().not('user_id', 'is', null))
     // Children first: a category can't go while a tx or subscription still points at it.
@@ -216,7 +395,10 @@ export async function replaceAll(b: Backup) {
 
 /** Deletes everything but the settings. */
 export const wipeAll = async () => replaceAll(rekey({ ...emptyBackup(), settings: [{ ...DEFAULT_SETTINGS, ...(await db.settings.get('app')) }] }))
-export const clearLocal = () => Promise.all(db.tables.map((t) => t.clear()))
+export const clearLocal = () => {
+  clearHistory()
+  return Promise.all(db.tables.map((t) => t.clear()))
+}
 
 /** Same id for the same subscription month on every device and every retry, so a month can only be charged once. */
 export async function chargeId(subId: string, month: string) {
@@ -237,13 +419,29 @@ export async function syncSubs() {
     const dates = dueDates(sub.lastMonth, current, sub.day)
     if (!dates.length) continue // charged on another device; the next pull updates this one's copy
     const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'
+    const base = ((await db.settings.get('app')) ?? DEFAULT_SETTINGS).currency
+    const foreign = sub.currency && sub.currency !== base ? sub.currency : null
     const charges = await Promise.all(
-      dates.map(async (date): Promise<Tx> => ({ id: await chargeId(sub.id, monthOf(date)), date, amount: sub.amount, kind: 'expense', categoryId: sub.categoryId, bucket, note: sub.name, createdAt: Date.now() })),
+      dates.map(async (date): Promise<Tx> => ({
+        id: await chargeId(sub.id, monthOf(date)),
+        date,
+        // A foreign price is converted at its charge day's rate, as the bank would.
+        amount: foreign ? (convert(sub.amount, (await rate(foreign, base, date)).rate) ?? 1) : sub.amount,
+        ...(foreign && { origAmount: sub.amount, origCurrency: foreign }),
+        kind: 'expense',
+        categoryId: sub.categoryId,
+        bucket,
+        note: sub.name,
+        createdAt: Date.now(),
+      })),
     )
     // Charges before the month moves on: if this stops in between, the next run redoes it, and the fixed ids
     // keep that (or another device doing the same) from charging twice.
-    await addOnce('txs', charges)
-    await update('subs', [sub.id], { lastMonth: monthOf(dates[dates.length - 1]) })
+    const fresh = await addOnce('txs', charges)
+    const moved = { id: sub.id, before: { lastMonth: sub.lastMonth }, after: { lastMonth: monthOf(dates[dates.length - 1]) } }
+    await patch('subs', [sub.id], moved.after)
+    // Charges made by saving a subscription undo with it; the ones a sync makes on its own are not undoable.
+    if (open) open.ops.push({ t: 'add', table: 'txs', rows: fresh }, { t: 'update', table: 'subs', rows: [moved] })
   }
 }
 

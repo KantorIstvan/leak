@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, emptyBackup, rekey } from './db'
-import { chargeId, diff, fromRow, toRow } from './cloud'
+import { chargeId, diff, fromRow, inverse, toRow, type Op } from './cloud'
 
 // A backup as the pre-cloud app wrote it: numeric ids, no icon, no subs.
 const legacy = {
@@ -50,6 +50,10 @@ describe('rekey', () => {
       { subs: [{ id: 1, name: 'Spotify', amount: 100, categoryId: 1, day: 32, lastMonth: '2026-01' }] },
       { settings: [{ ...DEFAULT_SETTINGS, ratios: { needs: 50, wants: 30, investments: 30 } }] },
       { settings: [{ ...DEFAULT_SETTINGS, currency: 'Ft' }] },
+      { txs: [{ ...tx, origAmount: 0, origCurrency: 'EUR' }] },
+      { txs: [{ ...tx, origAmount: 5, origCurrency: 'euro' }] },
+      { subs: [{ id: 1, name: 'Spotify', amount: 100, currency: 'usd', categoryId: 1, day: 3, lastMonth: '2026-01' }] },
+      { settings: [{ ...DEFAULT_SETTINGS, shortcuts: { add: 'N' } }] },
     ])
       expect(() => rekey({ ...legacy, ...bad }), JSON.stringify(bad)).toThrow()
   })
@@ -87,8 +91,21 @@ describe('chargeId', () => {
 
 describe('row mapping', () => {
   it('round-trips camelCase fields through snake_case columns', () => {
-    const tx = { id: 'a', date: '2026-01-05', amount: 100, categoryId: 'c', createdAt: 1767600000000 }
-    expect(toRow(tx)).toEqual({ id: 'a', date: '2026-01-05', amount: 100, category_id: 'c', created_at: '2026-01-05T08:00:00.000Z' })
+    const tx = { id: 'a', date: '2026-01-05', amount: 100, categoryId: 'c', createdAt: 1767600000000, origAmount: 30, origCurrency: 'EUR' }
+    expect(toRow(tx)).toEqual({ id: 'a', date: '2026-01-05', amount: 100, category_id: 'c', created_at: '2026-01-05T08:00:00.000Z', orig_amount: 30, orig_currency: 'EUR' })
     expect(fromRow({ ...toRow(tx), user_id: 'user_x' })).toEqual(tx)
+  })
+})
+
+describe('undo ops', () => {
+  const row = { id: 'a', amount: 1 }
+  it('turn into their opposite, and back', () => {
+    const add: Op = { t: 'add', table: 'txs', rows: [row] }
+    const edit: Op = { t: 'update', table: 'txs', rows: [{ id: 'a', before: { note: null }, after: { note: 'x' } }] }
+    const settings: Op = { t: 'settings', before: DEFAULT_SETTINGS, after: { ...DEFAULT_SETTINGS, theme: 'dark' } }
+    expect(inverse(add)).toEqual({ t: 'remove', table: 'txs', rows: [row] })
+    expect(inverse(edit)).toEqual({ t: 'update', table: 'txs', rows: [{ id: 'a', before: { note: 'x' }, after: { note: null } }] })
+    expect(inverse(settings)).toMatchObject({ before: { theme: 'dark' }, after: { theme: 'system' } })
+    for (const op of [add, edit, settings]) expect(inverse(inverse(op))).toEqual(op)
   })
 })

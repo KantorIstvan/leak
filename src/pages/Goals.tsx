@@ -92,7 +92,7 @@ function GoalForm({ goal, onDone }: { goal?: Goal; onDone: () => void }) {
   return (
     <Form onSubmit={submit}>
       <Field label={t.name} error={errors.name}>
-        <input className={inputCls} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+        <input className={inputCls} data-autofocus value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={t.target} error={errors.target}>

@@ -3,17 +3,19 @@
 import type { Bucket, Kind, Lang, Tx } from './db'
 import { isDay, parseAmount } from './lib'
 
-export const COLUMNS = ['date', 'type', 'amount', 'category', 'bucket', 'note'] as const
+export const COLUMNS = ['date', 'type', 'amount', 'category', 'bucket', 'note', 'original_amount', 'original_currency'] as const
 type Column = (typeof COLUMNS)[number]
 
 /** One transaction as it reads in a file: category by name, not id. */
 export interface Row {
   date: string
   kind: Kind
-  amount: number // minor units
+  amount: number // minor units of the base currency
   category: string
   bucket: Bucket | null
   note: string
+  origAmount?: number // paid in another currency: the amount in it, minor units
+  origCurrency?: string
 }
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim()
@@ -26,6 +28,8 @@ const HEADERS: Record<string, Column> = {
   category: 'category', kategoria: 'category',
   bucket: 'bucket', csoport: 'bucket',
   note: 'note', description: 'note', leiras: 'note', megjegyzes: 'note',
+  original_amount: 'original_amount', 'original amount': 'original_amount', 'eredeti osszeg': 'original_amount',
+  original_currency: 'original_currency', 'original currency': 'original_currency', 'eredeti penznem': 'original_currency',
 }
 const KINDS: Record<string, Kind> = { income: 'income', bevetel: 'income', expense: 'expense', kiadas: 'expense' }
 const BUCKET_NAMES: Record<string, Bucket> = {
@@ -38,7 +42,11 @@ const cell = (v: string) => (/[",;\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` 
 export function toCsv(txs: Tx[], catName: (id: string) => string) {
   const lines = [...txs]
     .sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt ?? 0) - (b.createdAt ?? 0))
-    .map((tx) => [tx.date, tx.kind, String(tx.amount / 100), catName(tx.categoryId), tx.bucket ?? '', tx.note].map(cell).join(','))
+    .map((tx) =>
+      [tx.date, tx.kind, String(tx.amount / 100), catName(tx.categoryId), tx.bucket ?? '', tx.note, tx.origAmount ? String(tx.origAmount / 100) : '', tx.origCurrency ?? '']
+        .map(cell)
+        .join(','),
+    )
   return '﻿' + [COLUMNS.join(','), ...lines].join('\r\n') + '\r\n'
 }
 
@@ -137,7 +145,12 @@ export function readCsv(text: string, fallbackCategory: string): { rows: Row[]; 
     const type = get(line, 'type')
     const kind: Kind | undefined = type ? KINDS[fold(type)] : 'expense'
     if (!amount || !date || !kind || (negative && kind === 'income')) return bad.push(i + 2)
+    // The original amount is optional, but one given half (a currency without an amount) is a mistake.
+    const currency = get(line, 'original_currency').toUpperCase()
+    const orig = get(line, 'original_amount') ? readAmount(get(line, 'original_amount')) : null
+    if ((currency || orig) && !(/^[A-Z]{3}$/.test(currency) && orig)) return bad.push(i + 2)
     rows.push({
+      ...(currency && { origAmount: Math.abs(orig!), origCurrency: currency }),
       date,
       kind,
       amount,
@@ -149,7 +162,7 @@ export function readCsv(text: string, fallbackCategory: string): { rows: Row[]; 
   return { rows, bad }
 }
 
-const key = (r: Omit<Row, 'bucket'>) => [r.date, r.kind, r.amount, fold(r.category), r.note.trim()].join('|')
+const key = (r: Pick<Row, 'date' | 'kind' | 'amount' | 'category' | 'note'>) => [r.date, r.kind, r.amount, fold(r.category), r.note.trim()].join('|')
 
 /**
  * The rows not in the app yet, so importing the same file twice adds nothing. Counted per identical row:

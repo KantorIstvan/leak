@@ -1,17 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react'
 import { useClerk, useUser } from '@clerk/react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { CaretUpDown, Check, CloudCheck, DownloadSimple, MagnifyingGlass, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
-import { add, replaceAll, saveSettings, wipeAll } from '../cloud'
+import { CloudCheck, DownloadSimple, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
+import { add, replaceAll, saveSettings, undoable, wipeAll } from '../cloud'
 import { decodeCsv, missing, readCsv, sameName, toCsv, type Row } from '../csv'
 import { BUCKETS, DATA_COLORS, db, exportBackup, rekey, type Backup, type Bucket, type DataColor, type Kind } from '../db'
-import { currencySymbol, monthOf, today } from '../lib'
-import { BUCKET_BG, Button, Card, ConfirmButton, PageHeader, Segmented, Select, Switch, triggerCls, useApp, useMonthlyIncome } from '../ui'
+import { monthOf, today } from '../lib'
+import { BUCKET_BG, Button, Card, ConfirmButton, CurrencySelect, PageHeader, Segmented, Select, Switch, useApp, useMonthlyIncome } from '../ui'
 import { desktop } from '../clerk'
+import { ShortcutsCard } from '../Commands'
 import { ColorPicker, SWATCHES } from './Categories'
-
-// Every ISO 4217 currency the runtime knows about.
-const CURRENCIES = Intl.supportedValuesOf('currency')
 
 const update = saveSettings
 
@@ -57,13 +55,14 @@ export function SettingsPage() {
               />
             </div>
             <div className="max-w-sm">
-              <CurrencyPicker />
+              <CurrencySelect label={t.currency} hint={t.currencyHint} value={s.currency} onChange={(currency) => update({ currency })} />
             </div>
           </div>
         </Card>
 
         <ColorsCard />
         <Ratios />
+        <ShortcutsCard />
         <CsvCard />
         <DataCard />
       </div>
@@ -198,121 +197,6 @@ function AccountCard() {
   )
 }
 
-const POPULAR = ['HUF', 'EUR', 'USD', 'GBP', 'CHF']
-const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
-
-/** Searchable currency combobox: matches code, symbol and the name in both the UI language and English. */
-function CurrencyPicker() {
-  const { t, s } = useApp()
-  const [open, setOpen] = useState(false)
-  const [q, setQ] = useState('')
-  const [active, setActive] = useState(0)
-  const box = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLUListElement>(null)
-
-  const all = useMemo(() => {
-    const local = new Intl.DisplayNames([t.locale], { type: 'currency' })
-    const en = new Intl.DisplayNames(['en'], { type: 'currency' })
-    return CURRENCIES.map((code) => {
-      const name = local.of(code) ?? code
-      const sym = currencySymbol(code, t.locale)
-      return { code, name, sym: sym === code ? '' : sym, hay: fold(`${code} ${name} ${en.of(code)} ${sym}`) }
-    }).sort((a, b) => a.name.localeCompare(b.name, t.locale))
-  }, [t.locale])
-
-  const needle = fold(q.trim())
-  const list = needle
-    ? all.filter((c) => c.hay.includes(needle))
-    : [...POPULAR.map((p) => all.find((c) => c.code === p)!).filter(Boolean), ...all.filter((c) => !POPULAR.includes(c.code))]
-  const current = all.find((c) => c.code === s.currency)
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: globalThis.PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
-  }, [open])
-  useEffect(() => {
-    listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' })
-  }, [active])
-
-  const choose = (code: string) => {
-    update({ currency: code })
-    setOpen(false)
-    setQ('')
-  }
-
-  return (
-    <div ref={box} className="relative grid gap-2">
-      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.currency}</span>
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => {
-          setOpen(!open)
-          setActive(0)
-        }}
-        className={`${triggerCls} h-11 w-full gap-3 text-base sm:text-sm`}
-      >
-        <span className="num w-10 shrink-0 font-semibold">{s.currency}</span>
-        <span className="flex-1 truncate text-zinc-600 dark:text-zinc-400">{current?.name}</span>
-        <CaretUpDown size={16} className="shrink-0 text-zinc-500" />
-      </button>
-      <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.currencyHint}</span>
-
-      {open && (
-        <div className="absolute inset-x-0 top-[4.75rem] z-20 overflow-hidden bg-panel shadow-[6px_6px_0] ring-1 shadow-ink/10 ring-ink dark:shadow-black/50">
-          <div className="relative border-b border-zinc-100 dark:border-zinc-800">
-            <MagnifyingGlass size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-zinc-500" aria-hidden />
-            <input
-              autoFocus
-              role="combobox"
-              aria-expanded
-              aria-controls="currency-list"
-              aria-activedescendant={list[active] ? `cur-${list[active].code}` : undefined}
-              placeholder={t.currencySearch}
-              className="h-11 w-full bg-transparent pr-3 pl-9 text-base outline-none placeholder:text-zinc-500 sm:text-sm"
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value)
-                setActive(0)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') setActive(Math.min(active + 1, list.length - 1))
-                else if (e.key === 'ArrowUp') setActive(Math.max(active - 1, 0))
-                else if (e.key === 'Enter' && list[active]) choose(list[active].code)
-                else if (e.key === 'Escape') setOpen(false)
-                else return
-                e.preventDefault()
-              }}
-            />
-          </div>
-          <ul ref={listRef} id="currency-list" role="listbox" className="max-h-72 overflow-y-auto p-1">
-            {list.map((c, i) => (
-              <li
-                key={c.code}
-                id={`cur-${c.code}`}
-                role="option"
-                aria-selected={c.code === s.currency}
-                onPointerMove={() => setActive(i)}
-                onClick={() => choose(c.code)}
-                className={`flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm ${i === active ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
-              >
-                <span className="num w-10 shrink-0 font-semibold">{c.code}</span>
-                <span className="flex-1 truncate">{c.name}</span>
-                {c.sym && <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{c.sym}</span>}
-                {c.code === s.currency && <Check size={16} weight="bold" className="shrink-0" />}
-              </li>
-            ))}
-            {!list.length && <li className="p-4 text-center text-sm text-zinc-600 dark:text-zinc-400">{t.noMatch}</li>}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
-}
-
 const PRESETS: Record<Bucket, number>[] = [
   { needs: 50, wants: 30, investments: 20 },
   { needs: 60, wants: 20, investments: 20 },
@@ -332,6 +216,12 @@ function Ratios() {
   // Which cut is being dragged; 'tie' when both sit on the same spot until the drag direction decides.
   const drag = useRef<0 | 1 | 'tie' | null>(null)
   const [held, setHeld] = useState<0 | 1 | 'tie' | null>(null) // drag, as state for styling
+  // A split saved from elsewhere (undo, another device) moves the handles, unless one is being dragged.
+  const [synced, setSynced] = useState(s.ratios)
+  if (!same(synced, s.ratios) && held === null) {
+    setSynced(s.ratios)
+    setR(s.ratios)
+  }
   // Presets and arrow keys glide into place; a drag follows the pointer with no lag.
   const ease = held === null ? 'motion-safe:duration-300 motion-safe:ease-[cubic-bezier(0.16,1,0.3,1)]' : ''
   const cuts = [r.needs, r.needs + r.wants]
@@ -559,22 +449,32 @@ function CsvCard() {
   async function confirmImport() {
     const p = plan!
     try {
-      const made = await add(
-        'categories',
-        p.newCats.map((c, i) => ({
-          ...c,
-          bucket: 'needs' as Bucket,
-          ...(c.name === t.uncategorized ? { color: '#a1a1aa', icon: 'DotsThree' } : { color: SWATCHES[i % SWATCHES.length], icon: 'Tag' }),
-        })),
-      )
-      const all = [...cats, ...made]
-      await add(
-        'txs',
-        p.rows.map((r) => {
-          const c = findCat(all, r)!
-          return { date: r.date, kind: r.kind, amount: r.amount, categoryId: c.id, bucket: r.kind === 'income' ? null : (r.bucket ?? c.bucket), note: r.note }
-        }),
-      )
+      await undoable({ what: 'import', table: 'txs', n: p.rows.length }, async () => {
+        const made = await add(
+          'categories',
+          p.newCats.map((c, i) => ({
+            ...c,
+            bucket: 'needs' as Bucket,
+            ...(c.name === t.uncategorized ? { color: '#a1a1aa', icon: 'DotsThree' } : { color: SWATCHES[i % SWATCHES.length], icon: 'Tag' }),
+          })),
+        )
+        const all = [...cats, ...made]
+        await add(
+          'txs',
+          p.rows.map((r) => {
+            const c = findCat(all, r)!
+            return {
+              date: r.date,
+              kind: r.kind,
+              amount: r.amount,
+              ...(r.origCurrency && { origAmount: r.origAmount, origCurrency: r.origCurrency }),
+              categoryId: c.id,
+              bucket: r.kind === 'income' ? null : (r.bucket ?? c.bucket),
+              note: r.note,
+            }
+          }),
+        )
+      })
       setMsg({ ok: true, text: t.csvAdded(p.rows.length) })
     } catch (e) {
       // Some batches may be in already: this plan would add those twice, picking the file again only adds the rest.

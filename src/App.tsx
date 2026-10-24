@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { AuthenticateWithRedirectCallback, ClerkFailed, SignInButton, useAuth } from '@clerk/react'
-import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { finishSso } from './clerk'
+import { Commands } from './Commands'
 import { clearLocal, refresh, setToken, syncFailed } from './cloud'
 import { DATA_COLORS, db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
@@ -166,7 +167,7 @@ function Notice({ title, hint, children }: { title: string; hint: string; childr
   return (
     <div className="grid min-h-dvh place-items-center p-4">
       <div className="grid max-w-sm justify-items-center gap-4 text-center">
-        <span className="grid size-12 place-items-center rounded-xl bg-accent text-accent-fg">
+        <span className="grid size-12 place-items-center bg-accent text-accent-fg">
           <Drop size={26} weight="fill" />
         </span>
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
@@ -220,6 +221,7 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
   const [collapsed, toggleSidebar] = useCollapsed()
+  const [palette, setPalette] = useState(false)
   useTheme(settings?.theme)
   // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open past
   // a charge day (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
@@ -278,11 +280,12 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
         style={{ '--side': collapsed ? '4.25rem' : '15rem' } as CSSProperties}
       >
         <aside className="hidden min-w-0 flex-col px-3 pt-4 pb-3 md:flex">
-          <div className="mb-6 flex h-9 items-center gap-2.5 px-1.5">
-            <span className="grid size-8 shrink-0 place-items-center bg-accent text-accent-fg">
-              <Drop size={18} weight="fill" />
+          {/* Tile centred on the nav icons below, wordmark on their labels; text-box trims to the caps so they centre on the tile. */}
+          <div className="mb-6 flex h-9 items-center gap-1.5 overflow-hidden px-2">
+            <span className="grid size-7 shrink-0 place-items-center bg-accent text-accent-fg">
+              <Drop size={16} weight="fill" />
             </span>
-            {!collapsed && <span className="overflow-hidden font-display text-2xl leading-none font-medium tracking-tight whitespace-nowrap">Leak</span>}
+            {!collapsed && <span className="font-display text-2xl font-medium tracking-tight whitespace-nowrap [text-box:trim-both_cap_alphabetic]">Leak</span>}
           </div>
           <nav className="grid gap-0.5">
             {NAV.filter((n) => n.id !== 'settings').map(({ id, icon }) => (
@@ -301,6 +304,7 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
               <Plus size={16} weight="bold" className="shrink-0" />
               {!collapsed && <span className="overflow-hidden">{t.addTx}</span>}
             </Button>
+            <SideItem icon={MagnifyingGlass} label={t.paletteHint} collapsed={collapsed} onClick={() => setPalette(true)} />
             <SideItem icon={GearSix} label={t.nav.settings} on={page === 'settings'} collapsed={collapsed} onClick={() => go('settings')} />
             <SideItem icon={SidebarSimple} label={collapsed ? t.expandSidebar : t.collapseSidebar} collapsed={collapsed} onClick={toggleSidebar} />
           </div>
@@ -361,6 +365,19 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
       <Sheet open={editing !== null} onClose={() => setEditing(null)} title={editing === 'new' ? t.addTx : t.editTx}>
         {editing && <TxForm tx={editing === 'new' ? undefined : editing} defaultDate={defaultDate} onDone={() => setEditing(null)} />}
       </Sheet>
+      <Commands
+        page={page}
+        go={go}
+        add={add}
+        edit={setEditing}
+        month={month}
+        setMonth={setMonth}
+        year={year}
+        setYear={setYear}
+        toggleSidebar={toggleSidebar}
+        palette={palette}
+        setPalette={setPalette}
+      />
       <Updater />
     </Ctx.Provider>
   )

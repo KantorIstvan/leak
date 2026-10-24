@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import { Check, CheckSquare, FunnelSimple, PencilSimple, Plus, SortAscending, X } from '@phosphor-icons/react'
-import { remove, update } from './cloud'
-import { BUCKETS, type Bucket, type Kind, type Tx } from './db'
+import { useMemo, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { Check, CheckSquare, FunnelSimple, Hash, PencilSimple, Plus, SortAscending, X } from '@phosphor-icons/react'
+import { remove, undoable, update } from './cloud'
+import { BUCKETS, db, type Bucket, type Kind, type Tx } from './db'
 import { DatePicker } from './DatePicker'
-import { EMPTY_QUERY, filterCount, parseAmount, queryTxs, type TxQuery, type TxSort } from './lib'
+import { cleanTag, EMPTY_QUERY, filterCount, formatMoney, parseAmount, queryTxs, sameTag, tagTotals, type TxQuery, type TxSort } from './lib'
 import { ICONS } from './icons'
 import {
   Amount, BUCKET_BG, Button, CatIcon, fade, CategoryPicker, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, ShowMore, Switch, useApp, useMonthlyIncome,
@@ -12,6 +13,8 @@ import {
 const SORTS: TxSort[] = ['date-desc', 'date-asc', 'amount-desc', 'amount-asc', 'category', 'note']
 /** Rows shown before the list is expanded: about as tall as the month page's left column. */
 const TX_MAX = 15
+/** Tag chips shown above the list. */
+const TAGS_MAX = 8
 
 /** The month's transaction list with search, filters, sorting and multi-select bulk editing. */
 export function TxBrowser({
@@ -34,9 +37,21 @@ export function TxBrowser({
   const [showFilters, setShowFilters] = useState(false)
   const [selected, setSelected] = useState<Set<string> | null>(null) // null = not selecting
   const [bulk, setBulk] = useState(false)
+  const [allMonths, setAllMonths] = useState(false)
+  const tags = useMemo(() => tagTotals(txs).slice(0, TAGS_MAX), [txs])
+  // Searching one #tag also totals and lists it over every month: a trip or a renovation rarely fits in one.
+  const words = q.text.trim().split(/\s+/)
+  const tag = words.length === 1 && words[0].startsWith('#') ? cleanTag(words[0]) || null : null
+  const everywhere = useLiveQuery(async () => {
+    if (!tag) return undefined
+    const tagged = await db.txs.filter((tx) => !!tx.tags?.some((g) => sameTag(g, tag))).toArray()
+    const total = tagTotals(tagged).find((x) => sameTag(x.tag, tag))
+    return total && { ...total, txs: tagged }
+  }, [tag])
+  const catName = (id: string) => cat.get(id)?.name ?? ''
 
   const query = { ...q, min: parseAmount(minText), max: parseAmount(maxText) }
-  const list = queryTxs(txs, query, (id) => cat.get(id)?.name ?? '')
+  const list = queryTxs(txs, query, catName)
   const active = filterCount(query)
   const narrowed = active > 0 || q.text.trim() !== ''
   const picked = txs.filter((tx) => selected?.has(tx.id))
@@ -120,8 +135,22 @@ export function TxBrowser({
         </div>
       )}
 
+      {tags.length > 0 && !selected && (
+        <div className="anim-fade -mt-1 flex flex-wrap gap-1.5" role="group" aria-label={t.tags}>
+          {tags.map((x) => {
+            const on = !!tag && sameTag(tag, x.tag)
+            return (
+              <button key={x.tag} type="button" aria-pressed={on} onClick={() => set({ text: on ? '' : `#${x.tag}` })} className={`${chipCls(on)} h-7! px-2.5!`}>
+                <Hash size={13} weight="bold" aria-hidden />
+                {x.tag}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {showFilters && !selected && (
-        <div className="anim-pop grid gap-4 rounded-xl bg-zinc-50 p-4 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
+        <div className="anim-pop grid gap-5 border-b border-line pb-5">
           <Segmented
             label={t.kindLabel}
             value={q.kind}
@@ -160,10 +189,10 @@ export function TxBrowser({
           <div className="grid gap-4">
             <div className="grid grid-cols-2 gap-2">
               <Field label={t.minAmount}>
-                <MoneyInput className="h-10!" value={minText} onChange={setMinText} />
+                <MoneyInput className="h-10!" placeholder={t.anyAmount} value={minText} onChange={setMinText} />
               </Field>
               <Field label={t.maxAmount}>
-                <MoneyInput className="h-10!" value={maxText} onChange={setMaxText} />
+                <MoneyInput className="h-10!" placeholder={t.anyAmount} value={maxText} onChange={setMaxText} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -180,9 +209,18 @@ export function TxBrowser({
         </div>
       )}
 
-      {narrowed && list.length > 0 && (
+      {narrowed && (list.length > 0 || everywhere) && (
         <p className="anim-fade num -mb-1 text-sm text-zinc-600 dark:text-zinc-400">
-          {[t.results(list.length), sums.income && `+${money(sums.income)}`, sums.expense && `−${money(sums.expense)}`].filter(Boolean).join(' · ')}
+          {list.length > 0 && [t.results(list.length), sums.income && `+${money(sums.income)}`, sums.expense && `−${money(sums.expense)}`].filter(Boolean).join(' · ')}
+          {everywhere && (
+            <button
+              type="button"
+              onClick={() => setAllMonths(true)}
+              className="block text-left underline underline-offset-4 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-accent dark:hover:text-zinc-100"
+            >
+              {t.tagTotal(everywhere.tag, money(everywhere.amount), everywhere.count)}
+            </button>
+          )}
         </p>
       )}
 
@@ -226,6 +264,15 @@ export function TxBrowser({
           />
         )}
       </Sheet>
+
+      <Sheet open={allMonths && !!everywhere} onClose={() => setAllMonths(false)} title={everywhere ? `#${everywhere.tag}` : ''}>
+        {everywhere && (
+          <div className="grid gap-4">
+            <p className="num text-sm text-zinc-600 dark:text-zinc-400">{t.tagTotal(everywhere.tag, money(everywhere.amount), everywhere.count)}</p>
+            <TxList txs={queryTxs(everywhere.txs, { ...EMPTY_QUERY, sort: q.sort }, catName)} selected={null} onPick={onEdit} years />
+          </div>
+        )}
+      </Sheet>
     </div>
   )
 }
@@ -248,10 +295,22 @@ const Box = ({ on }: { on: boolean }) => (
   </span>
 )
 
-function TxList({ txs, selected, highlight, onPick }: { txs: Tx[]; selected: Set<string> | null; highlight?: string | null; onPick: (tx: Tx) => void }) {
+function TxList({
+  txs,
+  selected,
+  highlight,
+  onPick,
+  years,
+}: {
+  txs: Tx[]
+  selected: Set<string> | null
+  highlight?: string | null
+  onPick: (tx: Tx) => void
+  years?: boolean // dates show the year: the list spans months
+}) {
   const { t, s, cat } = useApp()
   const monthlyIncome = useMonthlyIncome()
-  const day = new Intl.DateTimeFormat(t.locale, { month: 'short', day: 'numeric' })
+  const day = new Intl.DateTimeFormat(t.locale, { year: years ? 'numeric' : undefined, month: 'short', day: 'numeric' })
   const time = new Intl.DateTimeFormat(t.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: s.clock === '12' })
   const [all, setAll] = useState(false)
   return (
@@ -276,11 +335,12 @@ function TxList({ txs, selected, highlight, onPick }: { txs: Tx[]; selected: Set
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{tx.note || c?.name}</span>
                   <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">
-                    {[tx.note && c?.name, tx.bucket && t.bucket[tx.bucket]].filter(Boolean).join(' · ') || t.kind.income}
+                    {[tx.note && c?.name, tx.bucket && t.bucket[tx.bucket], ...(tx.tags ?? []).map((g) => `#${g}`)].filter(Boolean).join(' · ') || t.kind.income}
                   </span>
                 </span>
                 <span className="shrink-0 text-right">
                   <Amount amount={tx.amount} kind={tx.kind} bucket={tx.bucket} income={monthlyIncome} className="block text-sm font-semibold" />
+                  {tx.origCurrency && tx.origAmount && <span className="num block text-xs text-zinc-600 dark:text-zinc-400">{formatMoney(tx.origAmount, tx.origCurrency, t.locale)}</span>}
                   <span className="block text-xs text-zinc-500 dark:text-zinc-400">{tx.createdAt && <span className="mr-1.5 opacity-50">{time.format(tx.createdAt)}</span>}
                     {day.format(new Date(tx.date + 'T00:00'))}
                   </span>
@@ -322,8 +382,10 @@ function BulkForm({ txs, onDone }: { txs: Tx[]; onDone: (changed: boolean) => vo
     }
     const ids = (kind: Tx['kind']) => txs.filter((tx) => tx.kind === kind).map((tx) => tx.id)
     // Income has no bucket, so it gets the same changes minus that one.
-    await update('txs', ids('expense'), { ...changes, ...(bucket !== 'keep' && { bucket }) })
-    await update('txs', ids('income'), changes)
+    await undoable({ what: 'edit', table: 'txs', n: txs.length }, async () => {
+      await update('txs', ids('expense'), { ...changes, ...(bucket !== 'keep' && { bucket }) })
+      await update('txs', ids('income'), changes)
+    })
     onDone(true)
   }
 
