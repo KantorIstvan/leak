@@ -17,6 +17,14 @@ describe('csv', () => {
     ])
   })
 
+  it('round-trips the original amount of a foreign payment, and turns away half of one', () => {
+    const back = readCsv(toCsv([tx({ amount: 440000, origAmount: 1199, origCurrency: 'EUR' })], catName), 'U')!
+    expect(back.rows[0]).toMatchObject({ amount: 440000, origAmount: 1199, origCurrency: 'EUR' })
+    const half = readCsv('date,amount,original_amount,original_currency\n2026-08-01,10,,EUR\n2026-08-01,10,5,\n2026-08-01,10,5,eur\n', 'U')!
+    expect(half.bad).toEqual([2, 3])
+    expect(half.rows[0]).toMatchObject({ origAmount: 500, origCurrency: 'EUR' })
+  })
+
   it('reads a hand-made Hungarian file with ; and partial columns', () => {
     const r = readCsv('Dátum;Összeg;Leírás\n2026.10.19.;-4 700;kávé\n2026.02.30;100;rossz nap\n\n2026-10-20;12,5;\n', 'Kategória nélkül')!
     expect(r.rows).toEqual([

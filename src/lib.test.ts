@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, monthScore, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, suggestNote, summarize, tint, type TxQuery } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -282,5 +282,57 @@ describe('insights: biggest one-off', () => {
     ]
     const found = insights({ month: '2026-09', txs, prev, ratiosAt: () => ({ needs: 50, wants: 30, investments: 20 }), subCharges: new Set(), goals: [], closed: true, recent: false })
     expect(found).toContainEqual(expect.objectContaining({ kind: 'biggest', note: 'Laptop', amount: 300 }))
+  })
+})
+
+describe('tags', () => {
+  const tx = (tags: string[], amount = 100, kind: Tx['kind'] = 'expense'): Tx => ({ id: tags.join() + amount + kind, date: '2026-07-01', amount, kind, categoryId: 'c', bucket: kind === 'expense' ? 'wants' : null, note: 'x', tags })
+  it('cleans a typed tag', () => {
+    expect(cleanTag('  #Balaton 2026 ')).toBe('balaton-2026')
+    expect(cleanTag('##')).toBe('')
+  })
+  it('totals spending per tag, accents folded, biggest first', () => {
+    expect(tagTotals([tx(['nyaralás'], 500), tx(['nyaralas'], 300), tx(['food'], 900), tx(['nyaralás'], 1000, 'income')])).toEqual([
+      { tag: 'food', amount: 900, count: 1 },
+      { tag: 'nyaralás', amount: 800, count: 3 },
+    ])
+  })
+  it('search by #tag finds tagged rows', () => {
+    const list = [tx(['balaton']), tx([])]
+    expect(queryTxs(list, { ...EMPTY_QUERY, text: '#balaton' }, () => '')).toHaveLength(1)
+  })
+})
+
+describe('subscription watch', () => {
+  it('asks again a year after the last review, or after a year of charges', () => {
+    expect(reviewDue(null, '2026-10', false)).toBe(false)
+    expect(reviewDue(null, '2026-10', true)).toBe(true)
+    expect(reviewDue('2025-11', '2026-10', true)).toBe(false)
+    expect(reviewDue('2025-10', '2026-10', false)).toBe(true)
+  })
+})
+
+describe('yearRecap', () => {
+  const tx = (date: string, amount: number, kind: Tx['kind'], categoryId: string, note = '', bucket: Tx['bucket'] = 'needs'): Tx => ({
+    id: `${date}${amount}${note}${categoryId}`, date, amount, kind, categoryId, bucket: kind === 'income' ? null : bucket, note,
+  })
+  const ratios = () => ({ needs: 50, wants: 30, investments: 20 })
+  it('sums the year: saving, months on target, top category, regular purchase, top tag', () => {
+    const txs = [
+      tx('2026-01-05', 1000, 'income', 'job'),
+      tx('2026-01-06', 500, 'expense', 'rent'),
+      tx('2026-02-05', 1000, 'income', 'job'),
+      tx('2026-02-06', 900, 'expense', 'rent'),
+      ...['01', '02', '03'].map((m) => tx(`2026-${m}-10`, 10, 'expense', 'food', m === '02' ? 'lidl' : 'Lidl', 'wants')),
+      { ...tx('2026-03-11', 70, 'expense', 'travel', 'Hotel', 'wants'), tags: ['trip'] },
+      tx('2025-12-31', 99999, 'expense', 'rent'), // another year: byMonth skips it, the caller passes one year
+    ].filter((t) => t.date.startsWith('2026'))
+    const r = yearRecap(txs, 2026, ratios)
+    expect(r.income).toBe(2000)
+    expect(r.saved).toBe(2000 - 1400 - 100)
+    expect([r.hit, r.counted]).toEqual([1, 2])
+    expect(r.top).toEqual({ id: 'rent', amount: 1400, share: 1400 / 1500 })
+    expect(r.regular).toEqual({ note: 'Lidl', count: 3, amount: 30 })
+    expect(r.tag).toEqual({ tag: 'trip', amount: 70, count: 1 })
   })
 })

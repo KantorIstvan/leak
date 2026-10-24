@@ -1,11 +1,11 @@
 import { useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { Plus } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { add, remove, update } from '../cloud'
+import { add, remove, undoable, update } from '../cloud'
 import { BUCKETS, db, type Bucket, type Category, type Kind } from '../db'
 import { ICON_GROUPS } from '../icons'
-import { hexToHsv, hsvToHex } from '../lib'
-import { BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, Form, inputCls, PageHeader, SearchInput, Segmented, Sheet, useApp } from '../ui'
+import { hexToHsv, hsvToHex, parseAmount, toInput } from '../lib'
+import { BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, Form, inputCls, MoneyInput, PageHeader, SearchInput, Segmented, Sheet, useApp } from '../ui'
 
 type Editing = Category | { kind: Kind } | null
 
@@ -248,11 +248,17 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
   const [color, setColor] = useState(existing?.color ?? SWATCHES[0])
   const [bucket, setBucket] = useState<Bucket>(existing?.bucket ?? 'needs')
   const [icon, setIcon] = useState(existing?.icon ?? 'Tag')
+  const [limit, setLimit] = useState(existing?.limit ? toInput(existing.limit) : '')
   const [error, setError] = useState<string>()
+  const [limitError, setLimitError] = useState<string>()
 
   async function submit() {
-    if (!name.trim()) return setError(t.nameRequired)
-    const data = { name: name.trim(), color, bucket, icon, kind: editing.kind }
+    const cap = limit.trim() ? parseAmount(limit) : null
+    setError(name.trim() ? undefined : t.nameRequired)
+    setLimitError(limit.trim() && !cap ? t.amountInvalid : undefined)
+    if (!name.trim() || (limit.trim() && !cap)) return
+    // No limit sends no field, unless it clears one set before.
+    const data = { name: name.trim(), color, bucket, icon, kind: editing.kind, ...(cap ? { limit: cap } : existing?.limit && { limit: null }) }
     if (existing) await update('categories', [existing.id], data)
     else await add('categories', [data])
     onDone()
@@ -268,24 +274,27 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
     const old = existing!
     const txIds = await db.txs.where('categoryId').equals(old.id).primaryKeys()
     const subs = await db.subs.where('categoryId').equals(old.id).toArray()
-    if (txIds.length || subs.length) {
-      // category_id stays required in the schema, so orphans move to a shared "Uncategorized" category rather than null.
-      const home =
-        cats.find((c) => c.kind === old.kind && c.name === t.uncategorized && c.id !== old.id) ??
-        (await add('categories', [{ name: t.uncategorized, color: '#a1a1aa', kind: old.kind, bucket: old.bucket, icon: 'DotsThree' }]))[0]
-      await update('txs', txIds, { categoryId: home.id })
-      // Subscriptions without their own bucket used the old category's: pin it so they stay where they were.
-      await update('subs', subs.filter((s) => s.bucket).map((s) => s.id), { categoryId: home.id })
-      await update('subs', subs.filter((s) => !s.bucket).map((s) => s.id), { categoryId: home.id, bucket: old.bucket })
-    }
-    await remove('categories', [old.id])
+    // One undo brings the category back with its transactions and subscriptions moved home again.
+    await undoable({ what: 'delete', table: 'categories', n: 1 }, async () => {
+      if (txIds.length || subs.length) {
+        // category_id stays required in the schema, so orphans move to a shared "Uncategorized" category rather than null.
+        const home =
+          cats.find((c) => c.kind === old.kind && c.name === t.uncategorized && c.id !== old.id) ??
+          (await add('categories', [{ name: t.uncategorized, color: '#a1a1aa', kind: old.kind, bucket: old.bucket, icon: 'DotsThree' }]))[0]
+        await update('txs', txIds, { categoryId: home.id })
+        // Subscriptions without their own bucket used the old category's: pin it so they stay where they were.
+        await update('subs', subs.filter((s) => s.bucket).map((s) => s.id), { categoryId: home.id })
+        await update('subs', subs.filter((s) => !s.bucket).map((s) => s.id), { categoryId: home.id, bucket: old.bucket })
+      }
+      await remove('categories', [old.id])
+    })
     onDone()
   }
 
   return (
     <Form onSubmit={submit}>
       <Field label={t.name} error={error}>
-        <input className={inputCls} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+        <input className={inputCls} data-autofocus value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
 
       <ColorPicker
@@ -307,6 +316,12 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
           <Segmented label={t.defaultBucket} value={bucket} onChange={setBucket} options={BUCKETS.map((b) => ({ value: b, label: t.bucket[b] }))} />
           <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.defaultBucketHint}</span>
         </div>
+      )}
+
+      {editing.kind === 'expense' && (
+        <Field label={t.limit} hint={t.limitHint} error={limitError}>
+          <MoneyInput value={limit} onChange={setLimit} />
+        </Field>
       )}
 
       {used > 0 && <p className="anim-fade text-xs text-zinc-600 dark:text-zinc-400">{t.categoryDeleteHint(used)}</p>}

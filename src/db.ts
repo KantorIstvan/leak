@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
+import type { CommandId } from './keys'
 import { isDay } from './lib'
 
 export type Bucket = 'needs' | 'wants' | 'investments'
@@ -19,16 +20,20 @@ export interface Category {
   kind: Kind
   bucket: Bucket // default bucket for new expenses in this category
   icon?: string // name from ICONS; missing on categories made before icons existed
+  limit?: number | null // most to spend on it in a month (minor units), expense categories only; missing/null = no limit
 }
 
 export interface Tx {
   id: string
   date: string // YYYY-MM-DD
-  amount: number // minor units (cents / fillér), always positive
+  amount: number // minor units (cents / fillér) of the base currency, always positive
+  origAmount?: number | null // paid in another currency: the amount in it (minor units); `amount` is it converted on the day
+  origCurrency?: string | null // ISO 4217 code of origAmount; missing/null = paid in the base currency
   kind: Kind
   categoryId: string
   bucket: Bucket | null // null for income
   note: string
+  tags?: string[] | null // groups txs across categories and months (a trip, a renovation); missing/null = none
   createdAt?: number // ms epoch when logged; missing on txs made before this existed
 }
 
@@ -42,11 +47,13 @@ export interface Goal {
 export interface Sub {
   id: string
   name: string
-  amount: number // minor units, charged monthly
+  amount: number // minor units of `currency`, charged monthly
+  currency?: string | null // billed in another currency, converted at each charge's rate; missing/null = the base currency
   categoryId: string
   bucket?: Bucket // missing on subscriptions made before it existed: the category's default applies
   day: number // 1-31, clamped to month length
   lastMonth: string // YYYY-MM of the last generated charge
+  reviewed?: string | null // YYYY-MM the user last said they still use it; missing/null = never asked
 }
 
 /** A budget split no longer in force, with the last month (YYYY-MM) it applied to. */
@@ -65,6 +72,7 @@ export interface Settings {
   colors?: Partial<Record<DataColor, string>> | null // #rrggbb picked in Settings, over the defaults in light and dark; missing = defaults
   ratios: Record<Bucket, number> // percentages, sum to 100
   ratioHistory?: RatioPeriod[] | null // earlier splits, oldest first, so past months keep the plan they had; missing = the current split always applied
+  shortcuts?: Partial<Record<CommandId, string[]>> | null // keys changed from keys.ts's defaults; missing = the defaults
 }
 
 const huUser = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('hu')
@@ -170,6 +178,7 @@ const bucket: Check = (v) => BUCKETS.includes(v as Bucket)
 const oneOf = (...xs: unknown[]): Check => (v) => xs.includes(v)
 const absent = (check: Check): Check => (v) => v === undefined || check(v) // missing: the server fills in its default
 const nullable = (check: Check): Check => (v) => v == null || check(v)
+const code: Check = (v) => text(v) && /^[A-Z]{3}$/.test(v as string)
 const ratios: Check = (v) => {
   const r = (v ?? {}) as Record<Bucket, number>
   return BUCKETS.every((b) => Number.isInteger(r[b]) && r[b] >= 0) && BUCKETS.reduce((n, b) => n + r[b], 0) === 100
@@ -180,25 +189,38 @@ const ratios: Check = (v) => {
  * in full before anything is deleted: one bad value would otherwise stop the upload halfway, with the old data gone.
  */
 const FIELDS: Record<'categories' | 'txs' | 'goals' | 'subs' | 'settings', Record<string, Check>> = {
-  categories: { name: text, color: (v) => text(v) && /^#[\da-f]{6}$/i.test(v as string), kind, bucket, icon: nullable(text) },
-  txs: { date: isDay, amount: money, kind, bucket: nullable(bucket), note: absent(text), createdAt: absent(Number.isFinite) },
+  categories: { name: text, color: (v) => text(v) && /^#[\da-f]{6}$/i.test(v as string), kind, bucket, icon: nullable(text), limit: nullable((v) => money(v) && (v as number) > 0) },
+  txs: {
+    date: isDay,
+    amount: money,
+    origAmount: nullable((v) => money(v) && (v as number) > 0),
+    origCurrency: nullable(code),
+    kind,
+    bucket: nullable(bucket),
+    note: absent(text),
+    tags: nullable((v) => Array.isArray(v) && v.every(text)),
+    createdAt: absent(Number.isFinite),
+  },
   goals: { name: text, target: money, saved: money },
   subs: {
     name: text,
     amount: money,
+    currency: nullable(code),
     bucket: nullable(bucket),
     day: (v) => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 31,
     lastMonth: (v) => text(v) && /^\d{4}-\d{2}$/.test(v as string),
+    reviewed: nullable((v) => text(v) && /^\d{4}-\d{2}$/.test(v as string)),
   },
   settings: {
     lang: oneOf('hu', 'en'),
-    currency: (v) => text(v) && /^[A-Z]{3}$/.test(v as string),
+    currency: code,
     theme: oneOf('system', 'light', 'dark'),
     clock: nullable(oneOf('12', '24')),
     colorblind: absent((v) => typeof v === 'boolean'),
     colors: nullable((v) => typeof v === 'object' && Object.entries(v as object).every(([k, c]) => DATA_COLORS.includes(k as DataColor) && /^#[0-9a-f]{6}$/i.test(c))),
     ratios,
     ratioHistory: nullable((v) => Array.isArray(v) && v.every((h) => /^\d{4}-\d{2}$/.test(h?.until) && ratios(h.ratios))),
+    shortcuts: nullable((v) => typeof v === 'object' && Object.values(v as object).every((keys) => Array.isArray(keys) && keys.every(text))),
   },
 }
 

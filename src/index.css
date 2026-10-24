@@ -134,7 +134,19 @@ dialog.sheet {
   @apply m-0 mt-auto w-full max-w-none border-t-2 border-ink bg-panel p-0 text-zinc-900 shadow-2xl sm:m-auto sm:max-w-lg sm:border-2 dark:text-zinc-100;
   max-height: calc(100dvh - 2rem);
 }
+/* Title stays put, only the body scrolls (Sheet in ui.tsx). */
+dialog.sheet[open] {
+  @apply flex flex-col;
+}
 dialog.sheet::backdrop {
+  @apply bg-zinc-950/40 backdrop-blur-[2px];
+}
+
+/* Command palette: a box near the top, where the eye already is, at every width. */
+dialog.palette {
+  @apply mx-auto mt-[12vh] w-[min(38rem,calc(100vw-2rem))] max-w-none border-2 border-ink bg-panel p-0 text-zinc-900 shadow-[8px_8px_0] shadow-ink/10 dark:text-zinc-100 dark:shadow-black/50;
+}
+dialog.palette::backdrop {
   @apply bg-zinc-950/40 backdrop-blur-[2px];
 }
 
@@ -147,8 +159,12 @@ dialog.sheet::backdrop {
   dialog.sheet[open] {
     animation: sheet-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   }
-  dialog.sheet[open]::backdrop {
+  dialog.sheet[open]::backdrop,
+  dialog.palette[open]::backdrop {
     animation: fade-in 220ms ease-out;
+  }
+  dialog.palette[open] {
+    animation: pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes sheet-in {
     from {

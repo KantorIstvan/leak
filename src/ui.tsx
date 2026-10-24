@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
-import { CalendarBlank, CaretDown, CaretLeft, CaretRight, Check, MagnifyingGlass, X } from '@phosphor-icons/react'
+import { CalendarBlank, CaretDown, CaretLeft, CaretRight, CaretUpDown, Check, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { db, type Bucket, type Category, type Kind, type Settings } from './db'
 import type { Dict } from './i18n'
 import { ICONS } from './icons'
-import { avgMonthlyIncome, groupAmount, monthOf, shiftMonth, tint, today, type Tier } from './lib'
+import { avgMonthlyIncome, currencySymbol, groupAmount, monthOf, shiftMonth, tint, today, type Tier } from './lib'
 
 // Shape rules: square corners everywhere (index.css zeroes the radius scale); rounded-full only for dots and switches.
 
@@ -229,6 +229,139 @@ export function SearchInput({ value, onChange, placeholder, className = '' }: { 
   )
 }
 
+// Every ISO 4217 currency the runtime knows about.
+const CURRENCIES = Intl.supportedValuesOf('currency')
+const POPULAR = ['HUF', 'EUR', 'USD', 'GBP', 'CHF']
+const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+/**
+ * Searchable currency combobox: matches code, symbol and the name in both the UI language and English.
+ * `compact` shows just the code, to sit next to an amount; the base currency then leads the list.
+ */
+export function CurrencySelect({ value, onChange, label, hint, compact }: { value: string; onChange: (code: string) => void; label: string; hint?: string; compact?: boolean }) {
+  const { t, s } = useApp()
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [active, setActive] = useState(0)
+  const box = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const id = useId()
+
+  const all = useMemo(() => {
+    const local = new Intl.DisplayNames([t.locale], { type: 'currency' })
+    const en = new Intl.DisplayNames(['en'], { type: 'currency' })
+    return CURRENCIES.map((code) => {
+      const name = local.of(code) ?? code
+      const sym = currencySymbol(code, t.locale)
+      return { code, name, sym: sym === code ? '' : sym, hay: fold(`${code} ${name} ${en.of(code)} ${sym}`) }
+    }).sort((a, b) => a.name.localeCompare(b.name, t.locale))
+  }, [t.locale])
+
+  const needle = fold(q.trim())
+  const top = [...new Set([...(compact ? [s.currency] : []), ...POPULAR])]
+  const list = needle
+    ? all.filter((c) => c.hay.includes(needle))
+    : [...top.map((p) => all.find((c) => c.code === p)!).filter(Boolean), ...all.filter((c) => !top.includes(c.code))]
+  const current = all.find((c) => c.code === value)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: globalThis.PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false)
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [open])
+  useEffect(() => {
+    listRef.current?.children[active]?.scrollIntoView({ block: 'nearest' })
+  }, [active])
+
+  const choose = (code: string) => {
+    onChange(code)
+    setOpen(false)
+    setQ('')
+  }
+
+  return (
+    <div ref={box} className={`relative grid ${compact ? '' : 'gap-2'}`}>
+      {!compact && <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</span>}
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={compact ? `${label}: ${current?.name ?? value}` : undefined}
+        onClick={() => {
+          setOpen(!open)
+          setActive(0)
+        }}
+        className={`${triggerCls} h-11 ${compact ? 'gap-1.5 text-sm' : 'w-full gap-3 text-base sm:text-sm'}`}
+      >
+        <span className={`num shrink-0 font-semibold ${compact ? '' : 'w-10'}`}>{value}</span>
+        {!compact && <span className="flex-1 truncate text-zinc-600 dark:text-zinc-400">{current?.name}</span>}
+        <CaretUpDown size={16} className="shrink-0 text-zinc-500" />
+      </button>
+      {hint && <span className="text-xs text-zinc-600 dark:text-zinc-400">{hint}</span>}
+
+      {open && (
+        <div
+          className={`absolute z-20 overflow-hidden bg-panel shadow-[6px_6px_0] ring-1 shadow-ink/10 ring-ink dark:shadow-black/50 ${
+            compact ? 'top-full right-0 mt-2 w-72' : 'inset-x-0 top-[4.75rem]'
+          }`}
+          onKeyDown={(e) => {
+            // Esc closes the list, not the dialog the field sits in.
+            if (e.key !== 'Escape') return
+            e.preventDefault()
+            e.stopPropagation()
+            setOpen(false)
+          }}
+        >
+          <div className="relative border-b border-zinc-100 dark:border-zinc-800">
+            <MagnifyingGlass size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-zinc-500" aria-hidden />
+            <input
+              autoFocus
+              role="combobox"
+              aria-expanded
+              aria-controls={`${id}-list`}
+              aria-activedescendant={list[active] ? `${id}-${list[active].code}` : undefined}
+              placeholder={t.currencySearch}
+              className="h-11 w-full bg-transparent pr-3 pl-9 text-base outline-none placeholder:text-zinc-500 sm:text-sm"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value)
+                setActive(0)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') setActive(Math.min(active + 1, list.length - 1))
+                else if (e.key === 'ArrowUp') setActive(Math.max(active - 1, 0))
+                else if (e.key === 'Enter' && list[active]) choose(list[active].code)
+                else return
+                e.preventDefault()
+              }}
+            />
+          </div>
+          <ul ref={listRef} id={`${id}-list`} role="listbox" className="max-h-72 overflow-y-auto p-1">
+            {list.map((c, i) => (
+              <li
+                key={c.code}
+                id={`${id}-${c.code}`}
+                role="option"
+                aria-selected={c.code === value}
+                onPointerMove={() => setActive(i)}
+                onClick={() => choose(c.code)}
+                className={`flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm ${i === active ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+              >
+                <span className="num w-10 shrink-0 font-semibold">{c.code}</span>
+                <span className="flex-1 truncate">{c.name}</span>
+                {c.sym && <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{c.sym}</span>}
+                {c.code === value && <Check size={16} weight="bold" className="shrink-0" />}
+              </li>
+            ))}
+            {!list.length && <li className="p-4 text-center text-sm text-zinc-600 dark:text-zinc-400">{t.noMatch}</li>}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Day-of-month field (1-31) with a calendar-like grid popover. */
 export function DayOfMonthPicker({ label, value, onChange, format }: { label: string; value: number; onChange: (d: number) => void; format: (d: number) => string }) {
   const p = usePopover()
@@ -338,8 +471,8 @@ export function MoneyInput({
 }
 
 export const chipCls = (on: boolean) =>
-  `flex h-8 items-center gap-1.5 px-3 text-sm font-medium whitespace-nowrap ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
-    on ? 'bg-accent text-accent-fg' : 'text-zinc-800 hover:bg-ink/5 dark:text-zinc-200'
+  `flex h-8 items-center gap-1.5 px-3 text-sm font-medium whitespace-nowrap ring-1 ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+    on ? 'bg-accent text-accent-fg ring-accent' : 'text-zinc-800 ring-ink/30 hover:bg-ink/5 hover:ring-ink dark:text-zinc-200'
   }`
 
 export function Field({ label, error, hint, children }: { label: string; error?: string; hint?: string; children: ReactNode }) {
@@ -530,14 +663,21 @@ export function Empty({ title, hint, action }: { title: string; hint?: string; a
   )
 }
 
-/** Bottom sheet on phones, centred dialog on desktop. Children mount only while open, so forms reset. */
+/**
+ * Bottom sheet on phones, centred dialog on desktop. Children mount only while open, so forms reset.
+ * The field marked data-autofocus gets the focus: React's autoFocus fires while the dialog is still closed, and
+ * showModal would hand it to the close button.
+ */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null)
   const down = useRef<EventTarget | null>(null)
   const { t } = useApp()
   useEffect(() => {
     const d = ref.current!
-    if (open && !d.open) d.showModal()
+    if (open && !d.open) {
+      d.showModal()
+      d.querySelector<HTMLElement>('[data-autofocus]')?.focus()
+    }
     if (!open && d.open) d.close()
   }, [open])
   return (
@@ -549,16 +689,17 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
       onPointerDown={(e) => (down.current = e.target)}
       onClick={(e) => e.target === ref.current && down.current === ref.current && onClose()}
     >
+      {/* The body is the only scroller: it shrinks to what the dialog's max-height leaves after the header and border. */}
       {open && (
-        <div className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-6">
-          <header className="mb-5 flex items-center justify-between">
+        <>
+          <header className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5 pb-4 sm:px-6 sm:pt-6">
             <h2 className="font-display text-2xl leading-tight tracking-[-0.01em]">{title}</h2>
             <IconButton label={t.cancel} onClick={onClose}>
               <X size={18} />
             </IconButton>
           </header>
-          {children}
-        </div>
+          <div className="min-h-0 overflow-y-auto px-5 pt-1 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-6">{children}</div>
+        </>
       )}
     </dialog>
   )
