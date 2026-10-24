@@ -6,10 +6,12 @@ import { DatePicker } from './DatePicker'
 import { EMPTY_QUERY, filterCount, parseAmount, queryTxs, type TxQuery, type TxSort } from './lib'
 import { ICONS } from './icons'
 import {
-  Amount, BUCKET_BG, Button, CatIcon, fade, CategoryPicker, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, Switch, useApp, useMonthlyIncome,
+  Amount, BUCKET_BG, Button, CatIcon, fade, CategoryPicker, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, ShowMore, Switch, useApp, useMonthlyIncome,
 } from './ui'
 
 const SORTS: TxSort[] = ['date-desc', 'date-asc', 'amount-desc', 'amount-asc', 'category', 'note']
+/** Rows shown before the list is expanded: about as tall as the month page's left column. */
+const TX_MAX = 15
 
 /** The month's transaction list with search, filters, sorting and multi-select bulk editing. */
 export function TxBrowser({
@@ -87,25 +89,33 @@ export function TxBrowser({
           </Button>
         </div>
       ) : (
-        <div className="anim-fade flex flex-wrap gap-2">
-          <div className="w-full">
-            <SearchInput className="h-10!" placeholder={t.searchTx} value={q.text} onChange={(text) => set({ text })} />
+        <div className="anim-fade flex items-center gap-1 border-b border-ink">
+          <div className="min-w-0 flex-1">
+            <SearchInput className="h-10! border-b-0!" placeholder={t.searchTx} value={q.text} onChange={(text) => set({ text })} />
           </div>
-          <Button aria-expanded={showFilters} onClick={() => setShowFilters(!showFilters)} className={active ? 'ring-2! ring-accent!' : ''}>
+          <Button
+            variant="ghost"
+            aria-label={t.filters}
+            aria-expanded={showFilters}
+            onClick={() => setShowFilters(!showFilters)}
+            className={`px-3! ${showFilters || active ? 'text-zinc-900! dark:text-zinc-100!' : ''}`}
+          >
             <FunnelSimple size={16} weight={showFilters ? 'fill' : 'regular'} />
-            {t.filters}
+            <span className="max-sm:hidden">{t.filters}</span>
             {active > 0 && <span key={active} className="anim-pop num grid size-5 place-items-center rounded-full bg-accent text-xs text-accent-fg">{active}</span>}
           </Button>
           <Select
+            compact
+            align="right"
             label={t.sortLabel}
             icon={<SortAscending size={16} className="shrink-0 text-zinc-500" />}
             value={q.sort}
             onChange={(sort) => set({ sort })}
             options={SORTS.map((v) => ({ value: v, label: t.sorts[v] }))}
           />
-          <Button className="ml-auto" onClick={() => setSelected(new Set())}>
+          <Button variant="ghost" aria-label={t.select} className="px-3!" onClick={() => setSelected(new Set())}>
             <CheckSquare size={16} />
-            {t.select}
+            <span className="max-sm:hidden">{t.select}</span>
           </Button>
         </div>
       )}
@@ -243,41 +253,45 @@ function TxList({ txs, selected, highlight, onPick }: { txs: Tx[]; selected: Set
   const monthlyIncome = useMonthlyIncome()
   const day = new Intl.DateTimeFormat(t.locale, { month: 'short', day: 'numeric' })
   const time = new Intl.DateTimeFormat(t.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: s.clock === '12' })
+  const [all, setAll] = useState(false)
   return (
-    <ul className="-mx-2 grid">
-      {txs.map((tx) => {
-        const c = cat.get(tx.categoryId)
-        const on = !!selected?.has(tx.id)
-        return (
-          <li key={tx.id} className={`anim-fade-up ${fade(highlight, tx.categoryId)}`}>
-            <button
-              type="button"
-              role={selected ? 'checkbox' : undefined}
-              aria-checked={selected ? on : undefined}
-              onClick={() => onPick(tx)}
-              className={`flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
-                on || highlight === tx.categoryId ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
-              }`}
-            >
-              {selected && <Box on={on} />}
-              <CatIcon c={c} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{tx.note || c?.name}</span>
-                <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">
-                  {[tx.note && c?.name, tx.bucket && t.bucket[tx.bucket]].filter(Boolean).join(' · ') || t.kind.income}
+    <>
+      <ul className="grid">
+        {(all ? txs : txs.slice(0, TX_MAX)).map((tx) => {
+          const c = cat.get(tx.categoryId)
+          const on = !!selected?.has(tx.id)
+          return (
+            <li key={tx.id} className={`anim-fade-up border-b border-line last:border-0 ${fade(highlight, tx.categoryId)}`}>
+              <button
+                type="button"
+                role={selected ? 'checkbox' : undefined}
+                aria-checked={selected ? on : undefined}
+                onClick={() => onPick(tx)}
+                className={`flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
+                  on || highlight === tx.categoryId ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
+                }`}
+              >
+                {selected && <Box on={on} />}
+                <CatIcon c={c} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{tx.note || c?.name}</span>
+                  <span className="block truncate text-xs text-zinc-600 dark:text-zinc-400">
+                    {[tx.note && c?.name, tx.bucket && t.bucket[tx.bucket]].filter(Boolean).join(' · ') || t.kind.income}
+                  </span>
                 </span>
-              </span>
-              <span className="shrink-0 text-right">
-                <Amount amount={tx.amount} kind={tx.kind} bucket={tx.bucket} income={monthlyIncome} className="block text-sm font-semibold" />
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400">{tx.createdAt && <span className="mr-1.5 opacity-50">{time.format(tx.createdAt)}</span>}
-                  {day.format(new Date(tx.date + 'T00:00'))}
+                <span className="shrink-0 text-right">
+                  <Amount amount={tx.amount} kind={tx.kind} bucket={tx.bucket} income={monthlyIncome} className="block text-sm font-semibold" />
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400">{tx.createdAt && <span className="mr-1.5 opacity-50">{time.format(tx.createdAt)}</span>}
+                    {day.format(new Date(tx.date + 'T00:00'))}
+                  </span>
                 </span>
-              </span>
-            </button>
-          </li>
-        )
-      })}
-    </ul>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      {txs.length > TX_MAX && <ShowMore open={all} hidden={txs.length - TX_MAX} onToggle={() => setAll(!all)} className="-mt-2" />}
+    </>
   )
 }
 

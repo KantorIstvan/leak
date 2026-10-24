@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { BUCKETS, db } from '../db'
-import { byMonth, ranked, summarize, type Summary } from '../lib'
-import { BUCKET_BG, Card, CategoryBars, Donut, Empty, fade, PageHeader, PeriodNav, Stat, useApp } from '../ui'
+import { byMonth, monthOf, monthScore, ranked, ratiosFor, summarize, today, type Summary } from '../lib'
+import { BUCKET_BG, TIER_TEXT, Card, CategoryBars, Donut, Empty, fade, PageHeader, PeriodNav, PeriodPicker, Stat, useApp } from '../ui'
 
 export function YearPage({ year, setYear, openMonth }: { year: number; setYear: (y: number) => void; openMonth: (m: string) => void }) {
   const { t, s, money, cats } = useApp()
@@ -16,6 +16,9 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
   })
   const months = useMemo(() => (txs ? byMonth(txs, year) : []), [txs, year])
   const key = (i: number) => `${year}-${String(i + 1).padStart(2, '0')}`
+  // Only finished months are scored, each with the split it was planned with.
+  const scores = months.map((m, i) => (key(i) < monthOf(today()) ? monthScore(m, ratiosFor(s.ratios, s.ratioHistory, key(i))) : null))
+  const scored = scores.filter((x) => x !== null)
 
   // Memoized like the donuts: re-rendering the chart on every hover would restart its bar animation.
   const chart = useMemo(() => {
@@ -39,7 +42,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
             cursor={{ fill: 'var(--chart-grid)', opacity: 0.5, className: 'cursor-pointer' }}
             content={({ active, payload, label }) =>
               active && payload?.length ? (
-                <div className="rounded-lg bg-white px-3 py-2 text-sm shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">
+                <div className="bg-panel px-3 py-2 text-sm shadow-[4px_4px_0] ring-1 shadow-ink/10 ring-ink">
                   <div className="mb-1 font-medium">{label}</div>
                   {payload.map((p) => (
                     <div key={String(p.dataKey)} className="num flex items-center gap-2">
@@ -52,7 +55,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
               ) : null
             }
           />
-          <Bar dataKey="income" fill="var(--color-income)" radius={[4, 4, 0, 0]} className="cursor-pointer" />
+          <Bar dataKey="income" fill="var(--color-income)" className="cursor-pointer" />
           {/* Same hatch as .bg-expense in colour-blind mode, so the two bars differ by more than colour. */}
           <defs>
             <pattern id="expense-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -60,15 +63,19 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
               <rect width="1.5" height="5" fill="var(--card)" />
             </pattern>
           </defs>
-          <Bar dataKey="expense" fill={s.colorblind ? 'url(#expense-hatch)' : 'var(--color-expense)'} radius={[4, 4, 0, 0]} className="cursor-pointer" />
+          <Bar dataKey="expense" fill={s.colorblind ? 'url(#expense-hatch)' : 'var(--color-expense)'} className="cursor-pointer" />
         </BarChart>
       </ResponsiveContainer>
     )
   }, [months, year, t, money, s.colorblind])
 
   const header = (
-    <PageHeader title={String(year)}>
-      <PeriodNav onPrev={() => setYear(year - 1)} onNext={() => setYear(year + 1)} />
+    <PageHeader title={<PeriodPicker title={String(year)} value={String(year)} onChange={(v) => setYear(Number(v))} />}>
+      <PeriodNav
+        onPrev={() => setYear(year - 1)}
+        onNext={() => setYear(year + 1)}
+        onToday={year === thisYear() ? undefined : () => setYear(thisYear())}
+      />
     </PageHeader>
   )
   if (!txs) return header
@@ -90,7 +97,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
     <>
       {header}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-4 lg:gap-x-10">
         <Stat label={t.income} value={money(total.income)} tone="bg-income" />
         <Stat label={t.expenses} value={money(total.expense)} tone="bg-expense" />
         <Stat label={t.profit} value={money(total.income - total.expense)} />
@@ -99,7 +106,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
 
       <Card
         title={t.trend}
-        className="mt-4"
+        className="mt-8"
         action={
           <div className="flex gap-4 text-sm text-zinc-600 dark:text-zinc-400">
             <span className="flex items-center gap-2">
@@ -116,11 +123,11 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
         <div className="-ml-2 h-64 sm:h-72">{chart}</div>
       </Card>
 
-      <Card title={t.months} className="mt-4">
+      <Card title={t.months} className="mt-8">
         <div className="-mx-5 overflow-x-auto px-5">
-          <table className="num w-full min-w-[640px] text-sm">
+          <table className="num w-full min-w-[700px] text-sm">
             <thead>
-              <tr className="text-left text-xs text-zinc-600 dark:text-zinc-400">
+              <tr className="text-left text-[11px] tracking-[0.1em] text-zinc-500 uppercase dark:text-zinc-400">
                 <th className="pb-2 font-medium" />
                 <Th>{t.income}</Th>
                 <Th>{t.expenses}</Th>
@@ -128,6 +135,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
                   <Th key={b}>{t.bucket[b]}</Th>
                 ))}
                 <Th>{t.profit}</Th>
+                <Th>{t.scoreShort}</Th>
               </tr>
             </thead>
             <tbody>
@@ -141,22 +149,25 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
                 >
                   <td className="py-2 pr-4 font-medium first-letter:uppercase">{monthName(i)}</td>
                   <Row s={m} />
+                  <td className={`py-2 pl-4 text-right font-medium ${scores[i] ? TIER_TEXT[scores[i].tier] : ''}`}>{scores[i]?.score ?? '–'}</td>
                 </tr>
               ))}
               <tr className={`border-t-2 border-zinc-200 font-medium dark:border-zinc-700 ${fade(hovered, 'avg')}`}>
                 <td className="py-2 pr-4">{t.avg}</td>
                 <Row s={divide(total, active)} />
+                <td className="py-2 pl-4 text-right">{scored.length ? Math.round(scored.reduce((n, x) => n + x.score, 0) / scored.length) : '–'}</td>
               </tr>
               <tr className={`font-semibold ${fade(hovered, 'sum')}`}>
                 <td className="py-2 pr-4">{t.sum}</td>
                 <Row s={total} />
+                <td />
               </tr>
             </tbody>
           </table>
         </div>
       </Card>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-8 grid gap-x-10 gap-y-8 lg:grid-cols-2 xl:grid-cols-3">
         {total.expense > 0 && (
           <Card title={t.ratios}>
             <BucketSplit s={total} />
@@ -205,7 +216,7 @@ function BucketSplit({ s }: { s: Summary }) {
         )}
       >
         <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.expenses}</span>
-        <span className="num text-lg font-semibold tracking-tight">{money(s.expense, true)}</span>
+        <span className="num font-display tracking-[-0.02em] text-2xl leading-tight">{money(s.expense, true)}</span>
       </Donut>
       <ul className="grid gap-3">
         {BUCKETS.map((b) => (
@@ -230,7 +241,7 @@ function Row({ s }: { s: Summary }) {
   const { money } = useApp()
   const cells = [s.income, s.expense, ...BUCKETS.map((b) => s.buckets[b]), s.income - s.expense]
   return cells.map((v, i) => (
-    <td key={i} className={`py-2 pl-4 text-right whitespace-nowrap ${i === cells.length - 1 && v < 0 ? 'text-rose-700 dark:text-rose-400' : ''}`}>
+    <td key={i} className={`py-2 pl-4 text-right whitespace-nowrap ${i === cells.length - 1 && v < 0 ? 'text-expense' : ''}`}>
       {money(v)}
     </td>
   ))
@@ -245,6 +256,8 @@ function divide(s: Summary, n: number): Summary {
     byCategory: new Map(),
   }
 }
+
+const thisYear = () => Number(today().slice(0, 4))
 
 /** Averages are shown in whole currency units (fillér/cents dropped). */
 const roundTo = (minor: number) => Math.round(minor / 100) * 100

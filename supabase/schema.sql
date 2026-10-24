@@ -51,7 +51,9 @@ create table settings (
   theme text not null check (theme in ('system', 'light', 'dark')),
   clock text check (clock in ('12', '24')),
   colorblind boolean not null default false,
-  ratios jsonb not null
+  colors jsonb, -- data colours picked in Settings {income: '#rrggbb', ...}; null = defaults. Added in 0.7.0: alter table settings add column colors jsonb;
+  ratios jsonb not null,
+  ratio_history jsonb -- earlier splits [{until: 'YYYY-MM', ratios}], oldest first. Added in 0.7.0: alter table settings add column ratio_history jsonb;
 );
 
 do $$

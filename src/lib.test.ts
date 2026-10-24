@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, isDay, parseAmount, plan, queryTxs, shiftMonth, suggestNote, summarize, tint, type TxQuery } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, monthScore, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -203,5 +203,84 @@ describe('suggestNote', () => {
   })
   it('suggests nothing for blank or unknown input', () => {
     for (const s of ['', ' ', 'xyz']) expect(suggestNote(txs, s, 'expense')).toBeUndefined()
+  })
+})
+
+describe('monthScore', () => {
+  const month = (income: number, needs: number, wants: number) => ({ income, expense: needs + wants, buckets: { needs, wants, investments: 0 }, byCategory: new Map() })
+  const r = (needs: number, wants: number, investments: number) => ({ needs, wants, investments })
+  it('scores keeping the plan and spending under income', () => {
+    expect(monthScore(month(500, 260, 120), r(50, 30, 20))).toMatchObject({ score: 99, tier: 'healthy' })
+    // A plan that saves nothing, kept to the letter, still only breaks even.
+    expect(monthScore(month(500, 450, 50), r(90, 10, 0))).toMatchObject({ score: 75, tier: 'coping' })
+    expect(monthScore(month(500, 300, 250), r(50, 30, 20))).toMatchObject({ score: 36, tier: 'vulnerable' })
+  })
+  it('does not count investing as spending, and skips months without income', () => {
+    const invested = { ...month(500, 250, 150), buckets: { needs: 250, wants: 150, investments: 100 } }
+    expect(monthScore(invested, r(50, 30, 20))?.score).toBe(100)
+    expect(monthScore(month(0, 100, 0), r(50, 30, 20))).toBeNull()
+  })
+})
+
+describe('ratio history', () => {
+  const a = { needs: 50, wants: 30, investments: 20 }
+  const b = { needs: 60, wants: 30, investments: 10 }
+  const c = { needs: 70, wants: 29, investments: 1 }
+  it('keeps every past month on the split it was planned with', () => {
+    const h1 = withRatioChange(a, undefined, '2026-10') // a -> b in October
+    const h2 = withRatioChange(b, h1, '2026-12') // b -> c in December
+    expect(ratiosFor(c, h2, '2026-01')).toEqual(a)
+    expect(ratiosFor(c, h2, '2026-09')).toEqual(a)
+    expect(ratiosFor(c, h2, '2026-10')).toEqual(b)
+    expect(ratiosFor(c, h2, '2026-12')).toEqual(c)
+    expect(ratiosFor(c, null, '2026-01')).toEqual(c)
+  })
+  it('records only the first change within a month', () => {
+    const h = withRatioChange(a, undefined, '2026-10')
+    expect(withRatioChange(b, h, '2026-10')).toBe(h)
+  })
+})
+
+describe('insights', () => {
+  const r = () => ({ needs: 50, wants: 30, investments: 20 })
+  // Three ordinary months: 1000 income, 400 rent, 100 dining out.
+  const ordinary = ['2026-06', '2026-07', '2026-08'].flatMap((m) => [
+    tx({ date: `${m}-01`, kind: 'income', amount: 1000, bucket: null, categoryId: 'job' }),
+    tx({ date: `${m}-02`, amount: 400, categoryId: 'rent' }),
+    tx({ date: `${m}-03`, amount: 100, bucket: 'wants', categoryId: 'dining' }),
+  ])
+  const run = (txs: Tx[], closed = true) =>
+    insights({ month: '2026-09', txs, prev: ordinary, ratiosAt: r, subCharges: new Set(), goals: [], closed, recent: false })
+
+  it('names the category that ran over its usual, and what it cost', () => {
+    const [spike] = run([
+      tx({ date: '2026-09-01', kind: 'income', amount: 1000, bucket: null, categoryId: 'job' }),
+      tx({ date: '2026-09-02', amount: 400, categoryId: 'rent' }),
+      tx({ date: '2026-09-03', amount: 450, bucket: 'wants', categoryId: 'dining' }),
+    ])
+    expect(spike).toMatchObject({ kind: 'spike', categoryId: 'dining', amount: 450, avg: 100 })
+    expect(spike.kind === 'spike' && spike.better).toBeGreaterThan(monthScore(summarize([tx({ kind: 'income', amount: 1000, bucket: null }), tx({ amount: 400 }), tx({ amount: 450, bucket: 'wants' })]), r())!.score)
+  })
+  it('spots many small wants purchases, and drops only once the month is over', () => {
+    const month = [
+      tx({ date: '2026-09-01', kind: 'income', amount: 1000, bucket: null, categoryId: 'job' }),
+      tx({ date: '2026-09-02', amount: 400, categoryId: 'rent' }),
+      ...Array.from({ length: 7 }, (_, i) => tx({ id: `s${i}`, date: '2026-09-10', amount: 10, bucket: 'wants', categoryId: 'snacks' })),
+    ]
+    expect(run(month).map((i) => i.kind)).toEqual(expect.arrayContaining(['leak', 'drop']))
+    expect(run(month, false).map((i) => i.kind)).not.toContain('drop')
+  })
+})
+
+describe('insights: biggest one-off', () => {
+  it('skips usual costs like rent and finds the one-off behind them', () => {
+    const prev = ['2026-07', '2026-08'].flatMap((m) => [tx({ date: `${m}-01`, kind: 'income', amount: 1000, bucket: null }), tx({ date: `${m}-02`, amount: 400, categoryId: 'rent' })])
+    const txs = [
+      tx({ date: '2026-09-01', kind: 'income', amount: 1000, bucket: null }),
+      tx({ date: '2026-09-02', amount: 400, categoryId: 'rent' }),
+      tx({ date: '2026-09-12', amount: 300, bucket: 'wants', categoryId: 'tech', note: 'Laptop' }),
+    ]
+    const found = insights({ month: '2026-09', txs, prev, ratiosAt: () => ({ needs: 50, wants: 30, investments: 20 }), subCharges: new Set(), goals: [], closed: true, recent: false })
+    expect(found).toContainEqual(expect.objectContaining({ kind: 'biggest', note: 'Laptop', amount: 300 }))
   })
 })

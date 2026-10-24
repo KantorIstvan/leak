@@ -105,7 +105,7 @@ const dragTo = (apply: (x: number, y: number) => void) => {
 const RAINBOW = 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)'
 
 /** Preset swatches plus a rainbow "custom" swatch that opens a saturation/brightness field, hue strip and hex input. */
-function ColorPicker({ value, onChange, preview }: { value: string; onChange: (hex: string) => void; preview: ReactNode }) {
+export function ColorPicker({ value, onChange, preview }: { value: string; onChange: (hex: string) => void; preview: ReactNode }) {
   const { t } = useApp()
   const custom = !SWATCHES.includes(value)
   const [open, setOpen] = useState(custom)

@@ -4,7 +4,7 @@ import { Plus } from '@phosphor-icons/react'
 import { add, remove, syncSubs, update } from '../cloud'
 import { BUCKETS, db, type Bucket, type Sub } from '../db'
 import { monthOf, parseAmount, shiftMonth, today, toInput } from '../lib'
-import { Button, CatIcon, CategoryPicker, ConfirmButton, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp } from '../ui'
+import { Button, cardCls, CatIcon, CategoryPicker, ConfirmButton, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp } from '../ui'
 
 export function SubsPage() {
   const { t, money, cat } = useApp()
@@ -34,28 +34,28 @@ export function SubsPage() {
       {subs && !subs.length && <Empty title={t.emptySubs} />}
 
       {!!subs?.length && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <section className="grid content-start gap-6 rounded-2xl bg-white p-4 ring-1 ring-zinc-200/80 sm:p-5 dark:bg-zinc-900 dark:ring-zinc-800">
+        <div className="grid gap-x-10 gap-y-8 lg:grid-cols-3">
+          <section className={`${cardCls} grid content-start gap-6 pt-3`}>
             <div>
-              <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-                <span className="size-2 rounded-full bg-expense" aria-hidden />
+              <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">
+                <span className="size-2 bg-expense" aria-hidden />
                 {t.perMonth}
               </div>
-              <div className="num mt-1.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">{money(total)}</div>
+              <div className="num mt-2 truncate font-display tracking-[-0.02em] text-[1.75rem] leading-tight sm:text-4xl">{money(total)}</div>
               <div className="num mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">{t.perYear(money(total * 12))}</div>
             </div>
             <Donut data={slices} active={slice} onActive={setSlice}>
               <Roll text={hovered?.name ?? t.perYearLabel} className="max-w-32 justify-items-center text-xs text-zinc-600 dark:text-zinc-400" />
-              <Roll text={money((hovered?.amount ?? total) * 12, true)} className="num justify-items-center text-lg font-semibold tracking-tight" />
+              <Roll text={money((hovered?.amount ?? total) * 12, true)} className="num justify-items-center font-display tracking-[-0.02em] text-2xl leading-tight" />
             </Donut>
           </section>
-          <ul className="grid content-start rounded-2xl bg-white p-3 ring-1 ring-zinc-200/80 lg:col-span-2 dark:bg-zinc-900 dark:ring-zinc-800">
+          <ul className={`${cardCls} grid content-start pt-1 lg:col-span-2`}>
             {[...subs]
               .sort((a, b) => a.day - b.day)
               .map((s) => {
                 const c = cat.get(s.categoryId)
                 return (
-                  <li key={s.id} className={`anim-fade-up ${fade(slice, s.id)}`}>
+                  <li key={s.id} className={`anim-fade-up border-b border-line last:border-0 ${fade(slice, s.id)}`}>
                     <button
                       type="button"
                       onClick={() => setEditing(s)}
@@ -63,8 +63,8 @@ export function SubsPage() {
                       onPointerLeave={() => setRow(null)}
                       onFocus={() => setRow(s.id)}
                       onBlur={() => setRow(null)}
-                      className={`flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
-                        hover === s.id ? 'bg-zinc-50 dark:bg-zinc-800/60' : ''
+                      className={`flex w-full items-center gap-3 px-2 py-3 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
+                        hover === s.id ? 'bg-ink/5' : ''
                       }`}
                     >
                       <CatIcon c={c} />
