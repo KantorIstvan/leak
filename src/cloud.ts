@@ -2,8 +2,8 @@
 // first and reaches the mirror only once the server accepted it, so the UI never shows unsaved data.
 import { createClient } from '@supabase/supabase-js'
 import Dexie from 'dexie'
-import { db, DEFAULT_SETTINGS, emptyBackup, legacyBackup, mirrorBackup, rekey, type Backup, type Settings, type Sub, type Tx } from './db'
-import { dueDates, monthOf, today } from './lib'
+import { BUCKETS, db, DEFAULT_SETTINGS, emptyBackup, legacyBackup, mirrorBackup, rekey, type Backup, type Settings, type Sub, type Tx } from './db'
+import { dueDates, monthOf, today, withRatioChange } from './lib'
 
 let token: () => Promise<string | null> = async () => null
 /** Hands over Clerk's session token getter: Supabase verifies the token and RLS scopes every query to its user. */
@@ -24,7 +24,7 @@ type Table = 'categories' | 'txs' | 'goals' | 'subs'
 const TABLES: Table[] = ['categories', 'txs', 'goals', 'subs'] // parents first, for inserts
 
 // The app's camelCase fields <-> the schema's snake_case columns.
-const COLS: Record<string, string> = { categoryId: 'category_id', lastMonth: 'last_month', createdAt: 'created_at' }
+const COLS: Record<string, string> = { categoryId: 'category_id', lastMonth: 'last_month', createdAt: 'created_at', ratioHistory: 'ratio_history' }
 const FIELDS = Object.fromEntries(Object.entries(COLS).map(([k, v]) => [v, k]))
 
 export const toRow = (o: object) =>
@@ -96,13 +96,17 @@ export async function remove(table: Table, ids: string[]) {
 let settingsSaved: Promise<unknown> = Promise.resolve()
 export function saveSettings(p: Partial<Settings>) {
   const run = settingsSaved.then(async () => {
-    const next = { ...DEFAULT_SETTINGS, ...(await db.settings.get('app')), ...p }
+    const cur = { ...DEFAULT_SETTINGS, ...(await db.settings.get('app')) }
+    const next = { ...cur, ...p }
+    // A new split applies from this month on; months before it keep the one they were planned with.
+    if (p.ratios && BUCKETS.some((b) => p.ratios![b] !== cur.ratios[b])) next.ratioHistory = withRatioChange(cur.ratios, cur.ratioHistory, monthOf(today()))
     ok(await sb.from('settings').upsert(settingsRow(next)))
     touch('settings', ['app'])
     await db.settings.put(next)
   })
   settingsSaved = run.catch(() => {})
-  return run
+  // A fresh promise: the catch above marks `run` itself handled, and a failed save must still reach main.tsx's alert.
+  return run.then()
 }
 
 async function fetchAll(table: Table | 'settings') {

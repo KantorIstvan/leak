@@ -6,6 +6,10 @@ export type Kind = 'income' | 'expense'
 export type Lang = 'hu' | 'en'
 export type Theme = 'system' | 'light' | 'dark'
 
+/** The data colours Settings > Colours can override (the --color-* variables in index.css). */
+export const DATA_COLORS = ['income', 'expense', 'needs', 'wants', 'investments'] as const
+export type DataColor = (typeof DATA_COLORS)[number]
+
 export const BUCKETS: Bucket[] = ['needs', 'wants', 'investments']
 
 export interface Category {
@@ -45,6 +49,12 @@ export interface Sub {
   lastMonth: string // YYYY-MM of the last generated charge
 }
 
+/** A budget split no longer in force, with the last month (YYYY-MM) it applied to. */
+export interface RatioPeriod {
+  until: string
+  ratios: Record<Bucket, number>
+}
+
 export interface Settings {
   id: 'app'
   lang: Lang
@@ -52,7 +62,9 @@ export interface Settings {
   theme: Theme
   clock?: '12' | '24' // missing on settings made before this existed: treated as 24
   colorblind?: boolean // swaps the data palette for one safe for protan/deutan/tritan vision and monochromacy, hatches expenses
+  colors?: Partial<Record<DataColor, string>> | null // #rrggbb picked in Settings, over the defaults in light and dark; missing = defaults
   ratios: Record<Bucket, number> // percentages, sum to 100
+  ratioHistory?: RatioPeriod[] | null // earlier splits, oldest first, so past months keep the plan they had; missing = the current split always applied
 }
 
 const huUser = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('hu')
@@ -158,6 +170,10 @@ const bucket: Check = (v) => BUCKETS.includes(v as Bucket)
 const oneOf = (...xs: unknown[]): Check => (v) => xs.includes(v)
 const absent = (check: Check): Check => (v) => v === undefined || check(v) // missing: the server fills in its default
 const nullable = (check: Check): Check => (v) => v == null || check(v)
+const ratios: Check = (v) => {
+  const r = (v ?? {}) as Record<Bucket, number>
+  return BUCKETS.every((b) => Number.isInteger(r[b]) && r[b] >= 0) && BUCKETS.reduce((n, b) => n + r[b], 0) === 100
+}
 
 /**
  * What the server accepts in each stored field (ids and category links are checked by rekey). A backup is checked
@@ -180,10 +196,9 @@ const FIELDS: Record<'categories' | 'txs' | 'goals' | 'subs' | 'settings', Recor
     theme: oneOf('system', 'light', 'dark'),
     clock: nullable(oneOf('12', '24')),
     colorblind: absent((v) => typeof v === 'boolean'),
-    ratios: (v) => {
-      const r = (v ?? {}) as Record<Bucket, number>
-      return BUCKETS.every((b) => Number.isInteger(r[b]) && r[b] >= 0) && BUCKETS.reduce((n, b) => n + r[b], 0) === 100
-    },
+    colors: nullable((v) => typeof v === 'object' && Object.entries(v as object).every(([k, c]) => DATA_COLORS.includes(k as DataColor) && /^#[0-9a-f]{6}$/i.test(c))),
+    ratios,
+    ratioHistory: nullable((v) => Array.isArray(v) && v.every((h) => /^\d{4}-\d{2}$/.test(h?.until) && ratios(h.ratios))),
   },
 }
 

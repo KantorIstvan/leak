@@ -1,4 +1,4 @@
-import { BUCKETS, type Bucket, type Tx } from './db'
+import { BUCKETS, type Bucket, type Goal, type RatioPeriod, type Tx } from './db'
 
 // --- Money ----------------------------------------------------------------
 // Amounts are stored as integer minor units (x100) to avoid float drift.
@@ -142,6 +142,150 @@ export function plan(s: Summary, ratios: Record<Bucket, number>): BucketPlan[] {
     const goal = Math.round((s.income * ratios[bucket]) / 100)
     return { bucket, ratio: ratios[bucket], goal, actual: s.buckets[bucket], left: goal - s.buckets[bucket] }
   })
+}
+
+// --- Monthly score --------------------------------------------------------
+
+/** The split a month was planned with: the first earlier split still in force then, else the current one. */
+export const ratiosFor = (current: Record<Bucket, number>, history: RatioPeriod[] | null | undefined, month: string) =>
+  history?.find((h) => month <= h.until)?.ratios ?? current
+
+/**
+ * The history after changing the split during `month`: the old split stays with every month before it.
+ * A second change in the same month keeps the first record, as the splits in between never covered a whole month.
+ */
+export function withRatioChange(current: Record<Bucket, number>, history: RatioPeriod[] | null | undefined, month: string): RatioPeriod[] {
+  const until = shiftMonth(month, -1)
+  const h = history ?? []
+  return h.some((p) => p.until >= until) ? h : [...h, { until, ratios: current }]
+}
+
+export type Tier = 'healthy' | 'coping' | 'vulnerable'
+
+/**
+ * 0-100, half how well the month kept its own split, half whether needs + wants stayed under income
+ * (indicator 1 of the Financial Health Network's FinHealth Score, whose tiers this uses). Investing is not spending:
+ * the saving rate is income minus needs and wants, as Eurostat defines it. Null without income.
+ */
+export function monthScore(s: Summary, ratios: Record<Bucket, number>): { score: number; tier: Tier; rate: number } | null {
+  if (s.income <= 0) return null
+  const goal = (b: Bucket) => (s.income * ratios[b]) / 100
+  const saved = s.income - s.buckets.needs - s.buckets.wants
+  // Share of a bucket's spending that fit its budget.
+  const fit = (b: Bucket) => (s.buckets[b] <= goal(b) ? 1 : goal(b) / s.buckets[b])
+  const kept = goal('investments') ? Math.max(0, Math.min(1, saved / goal('investments'))) : Number(saved >= 0)
+  const plan = ((fit('needs') + fit('wants') + kept) / 3) * 100
+  const rate = saved / s.income
+  // FinHealth's "spending about equal to income" = 50; keeping a fifth (the 50/30/20 savings share) = 100.
+  const balance = Math.max(0, Math.min(100, 50 + 250 * rate))
+  const score = Math.round((plan + balance) / 2)
+  return { score, tier: score >= 80 ? 'healthy' : score >= 40 ? 'coping' : 'vulnerable', rate }
+}
+
+export type Insight = { weight: number } & (
+  | { kind: 'spike'; categoryId: string; amount: number; avg: number; better?: number } // better: the score had it stayed at its average
+  | { kind: 'drop'; categoryId: string; amount: number; avg: number }
+  | { kind: 'leak'; categoryId: string; count: number; amount: number }
+  | { kind: 'biggest'; categoryId: string; note: string; amount: number; share: number }
+  | { kind: 'streak'; months: number }
+  | { kind: 'best' }
+  | { kind: 'subs'; amount: number; share: number }
+  | { kind: 'goal'; name: string; months: number }
+)
+
+/**
+ * What stood out in a month, most notable first (weight is roughly the share of income it is about), at most `limit`.
+ * Only facts about this month's own transactions against the user's previous months: nothing the charts already show.
+ */
+export function insights(o: {
+  month: string
+  txs: Tx[]
+  prev: Tx[] // up to 12 months before `month`
+  ratiosAt: (month: string) => Record<Bucket, number>
+  subCharges: Set<string> // ids of this month's subscription charges
+  goals: Goal[]
+  closed: boolean // the month is over: drops, streaks and what-ifs need the whole month
+  recent: boolean // the current or the last finished month: goal estimates are about now
+  limit?: number
+}): Insight[] {
+  const { month, txs, prev, closed } = o
+  const sum = summarize(txs)
+  if (!sum.income) return []
+  const out: Insight[] = []
+  const of = (n: number) => n / sum.income
+
+  // Per category: this month's spending and its average over the previous 3 months that had any spending.
+  const spent = (list: Tx[]) => {
+    const m = new Map<string, Tx[]>()
+    for (const t of list) if (t.kind === 'expense') m.set(t.categoryId, [...(m.get(t.categoryId) ?? []), t])
+    return m
+  }
+  const now = spent(txs)
+  const back = prev.filter((t) => t.date >= `${shiftMonth(month, -3)}-01`)
+  const backMonths = new Set(back.filter((t) => t.kind === 'expense').map((t) => monthOf(t.date))).size
+  // In whole currency units, like the year view's averages.
+  const avgOf = (id: string) =>
+    backMonths ? Math.round(back.reduce((n, t) => n + (t.kind === 'expense' && t.categoryId === id ? t.amount : 0), 0) / backMonths / 100) * 100 : 0
+  const total = (list: Tx[]) => list.reduce((n, t) => n + t.amount, 0)
+  const score = closed ? monthScore(sum, o.ratiosAt(month))?.score : undefined
+
+  const spikes = new Set<string>()
+  for (const [id, list] of now) {
+    const amount = total(list)
+    const avg = avgOf(id)
+    if (avg > 0 && amount >= 1.5 * avg && of(amount - avg) >= 0.03) {
+      spikes.add(id)
+      let better: number | undefined
+      if (score !== undefined) {
+        // The same month with this category back at its average, the excess taken off the bucket it mostly went to.
+        const bucket = (list[0].bucket ?? 'needs') as Bucket
+        const what = { ...sum, buckets: { ...sum.buckets, [bucket]: sum.buckets[bucket] - (amount - avg) } }
+        const s = monthScore(what, o.ratiosAt(month))!.score
+        if (s - score >= 2) better = s
+      }
+      out.push({ kind: 'spike', categoryId: id, amount, avg, better, weight: of(amount - avg) })
+    } else if (closed && of(avg) >= 0.03 && amount <= 0.7 * avg) {
+      out.push({ kind: 'drop', categoryId: id, amount, avg, weight: of(avg - amount) * 0.8 })
+    }
+    // Many small wants purchases: the leaks the app is named after.
+    if (list.length >= 6 && list[0].bucket === 'wants' && list.every((t) => of(t.amount) <= 0.02))
+      out.push({ kind: 'leak', categoryId: id, count: list.length, amount, weight: of(amount) + 0.02 })
+  }
+  // Categories that had an average but nothing at all this month.
+  if (closed)
+    for (const id of new Set(back.filter((t) => t.kind === 'expense').map((t) => t.categoryId)))
+      if (!now.has(id) && of(avgOf(id)) >= 0.03) out.push({ kind: 'drop', categoryId: id, amount: 0, avg: avgOf(id), weight: of(avgOf(id)) * 0.8 })
+
+  // The biggest one-off: not a subscription, not a usual monthly cost like rent, not already a spike.
+  const big = txs
+    .filter((t) => t.kind === 'expense' && !o.subCharges.has(t.id) && avgOf(t.categoryId) < 0.5 * t.amount)
+    .sort((a, b) => b.amount - a.amount)[0]
+  if (big && !spikes.has(big.categoryId) && big.amount >= 0.2 * sum.expense)
+    out.push({ kind: 'biggest', categoryId: big.categoryId, note: big.note, amount: big.amount, share: big.amount / sum.expense, weight: of(big.amount) })
+
+  if (closed && score !== undefined) {
+    const byMonthKey = new Map<string, Tx[]>()
+    for (const t of prev) byMonthKey.set(monthOf(t.date), [...(byMonthKey.get(monthOf(t.date)) ?? []), t])
+    const kept = (m: string, s: Summary) => s.income > 0 && (s.income - s.buckets.needs - s.buckets.wants) * 100 >= s.income * o.ratiosAt(m).investments
+    let streak = 0
+    for (let m = month, s = sum; kept(m, s); m = shiftMonth(m, -1), s = summarize(byMonthKey.get(m) ?? [])) streak++
+    if (streak >= 3) out.push({ kind: 'streak', months: streak, weight: 0.06 + 0.01 * streak })
+    const others = [...byMonthKey]
+      .filter(([m]) => m.slice(0, 4) === month.slice(0, 4))
+      .map(([m, list]) => monthScore(summarize(list), o.ratiosAt(m))?.score)
+      .filter((x) => x !== undefined)
+    if (others.length >= 3 && others.every((x) => score > x)) out.push({ kind: 'best', weight: 0.12 })
+  }
+
+  const subs = total(txs.filter((t) => o.subCharges.has(t.id)))
+  if (of(subs) >= 0.03) out.push({ kind: 'subs', amount: subs, share: subs / sum.expense, weight: of(subs) * 0.5 })
+
+  // At this month's pace, when the closest unfinished goal is reached (profit, as the goals page estimates).
+  const profit = sum.income - sum.expense
+  const goal = o.goals.filter((g) => g.saved < g.target).sort((a, b) => a.target - a.saved - (b.target - b.saved))[0]
+  if (o.recent && goal && profit > 0) out.push({ kind: 'goal', name: goal.name, months: Math.ceil((goal.target - goal.saved) / profit), weight: 0.03 })
+
+  return out.sort((a, b) => b.weight - a.weight).slice(0, o.limit ?? 3)
 }
 
 /** 12 monthly summaries for a year (index 0 = January). */

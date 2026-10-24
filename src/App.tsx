@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { AuthenticateWithRedirectCallback, ClerkFailed, SignInButton, useAuth } from '@clerk/react'
-import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, Plus, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { finishSso } from './clerk'
 import { clearLocal, refresh, setToken, syncFailed } from './cloud'
-import { db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
+import { DATA_COLORS, db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
 import { formatMoney, monthOf, today } from './lib'
 import { TxForm } from './TxSheet'
@@ -42,14 +42,64 @@ function usePage() {
   return [page, (p: Page) => (location.hash = p)] as const
 }
 
+/** Light/dark from the setting (or the OS). Before settings load it keeps what index.html set. */
 function useTheme(theme: Theme | undefined) {
   useEffect(() => {
+    if (!theme) return
     const mq = matchMedia('(prefers-color-scheme: dark)')
     const apply = () => document.documentElement.classList.toggle('dark', theme === 'dark' || (theme !== 'light' && mq.matches))
     apply()
     mq.addEventListener('change', apply)
+    // index.html paints this before the app loads, so a dark window never opens white.
+    try {
+      localStorage.setItem('leak-look', JSON.stringify({ theme }))
+    } catch {
+      // storage blocked: the next start just follows the OS
+    }
     return () => mq.removeEventListener('change', apply)
   }, [theme])
+}
+
+/** Sidebar collapsed to an icon rail; remembered on this device. */
+function useCollapsed() {
+  const [collapsed, set] = useState(() => {
+    try {
+      return localStorage.getItem('leak-sidebar') === 'rail'
+    } catch {
+      return false
+    }
+  })
+  const toggle = () => {
+    set(!collapsed)
+    try {
+      localStorage.setItem('leak-sidebar', collapsed ? 'full' : 'rail')
+    } catch {
+      // storage blocked: collapsed for this session only
+    }
+  }
+  return [collapsed, toggle] as const
+}
+
+/** Sidebar entry. Collapsed, the label hides and shows as a tooltip; icons keep their place, so nothing jumps. */
+function SideItem({ icon: I, label, on, collapsed, onClick }: { icon: Icon; label: string; on?: boolean; collapsed: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={on ? 'page' : undefined}
+      aria-label={collapsed ? label : undefined}
+      data-tip={collapsed ? label : undefined}
+      data-tip-side="right"
+      className={`flex h-9 min-w-0 items-center gap-3 px-[13px] text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-accent ${
+        on
+          ? 'bg-ink/5 text-zinc-900 shadow-[inset_2px_0_0_var(--color-ink)] dark:text-white'
+          : 'text-zinc-600 hover:bg-ink/5 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+      }`}
+    >
+      <I size={18} weight={on ? 'fill' : 'regular'} className="shrink-0" />
+      {!collapsed && <span className="overflow-hidden whitespace-nowrap">{label}</span>}
+    </button>
+  )
 }
 
 // Desktop return from Google/GitHub: Clerk's native mode lands back on the app with ?rotating_token_nonce=….
@@ -86,6 +136,8 @@ export default function App() {
       // The sync refreshes the last session's data in the background; offline that data stays, under a banner (Main).
       if ((await db.settings.count()) && live) setData('ready')
       await refresh().catch(console.error)
+      // Dev-only sample data (demo.ts); seeded after the sync so it lands in the signed-in account with its categories.
+      if (import.meta.env.DEV && live && location.search.includes('demo')) await import('./demo').then((m) => m.seedDemo())
       if (live) setData((await db.settings.count()) ? 'ready' : 'failed')
     })()
     return () => {
@@ -167,6 +219,7 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const [month, setMonth] = useState(() => monthOf(today()))
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
+  const [collapsed, toggleSidebar] = useCollapsed()
   useTheme(settings?.theme)
   // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open past
   // a charge day (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
@@ -183,8 +236,15 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   }, [clerkDown])
   useEffect(() => {
     if (!settings) return
-    document.documentElement.lang = settings.lang
-    document.documentElement.toggleAttribute('data-colorblind', !!settings.colorblind)
+    const root = document.documentElement
+    root.lang = settings.lang
+    root.toggleAttribute('data-colorblind', !!settings.colorblind)
+    // Colours picked in Settings, inline so they win over the defaults in light and dark. Colour-blind mode locks them out.
+    for (const k of DATA_COLORS) {
+      const c = !settings.colorblind && settings.colors?.[k]
+      if (c) root.style.setProperty(`--color-${k}`, c)
+      else root.style.removeProperty(`--color-${k}`)
+    }
   }, [settings])
 
   const ctx = useMemo<AppCtx | null>(() => {
@@ -212,39 +272,43 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
 
   return (
     <Ctx.Provider value={ctx}>
-      <div className="min-h-dvh md:grid md:grid-cols-[15rem_1fr]">
-        <aside className="sticky top-0 hidden h-dvh flex-col gap-1 border-r border-zinc-200/80 p-4 md:flex dark:border-zinc-800">
-          <div className="mb-6 flex items-center gap-2 px-2 pt-1">
-            <span className="grid size-8 place-items-center rounded-lg bg-accent text-accent-fg">
+      {/* Desktop: the sidebar sits on the canvas and the page scrolls inside an inset panel. Phones scroll the window. */}
+      <div
+        className="min-h-dvh md:grid md:h-dvh md:min-h-0 md:grid-cols-[var(--side)_minmax(0,1fr)] md:motion-safe:transition-[grid-template-columns] md:motion-safe:duration-200"
+        style={{ '--side': collapsed ? '4.25rem' : '15rem' } as CSSProperties}
+      >
+        <aside className="hidden min-w-0 flex-col px-3 pt-4 pb-3 md:flex">
+          <div className="mb-6 flex h-9 items-center gap-2.5 px-1.5">
+            <span className="grid size-8 shrink-0 place-items-center bg-accent text-accent-fg">
               <Drop size={18} weight="fill" />
             </span>
-            <span className="text-lg font-semibold tracking-tight">Leak</span>
+            {!collapsed && <span className="overflow-hidden font-display text-2xl leading-none font-medium tracking-tight whitespace-nowrap">Leak</span>}
           </div>
-          <nav className="grid gap-1">
-            {NAV.map(({ id, icon: I }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => go(id)}
-                aria-current={page === id ? 'page' : undefined}
-                className={`flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-accent ${
-                  page === id
-                    ? 'bg-zinc-900/[0.06] text-zinc-900 dark:bg-white/10 dark:text-white'
-                    : 'text-zinc-600 hover:bg-zinc-900/[0.04] hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-100'
-                }`}
-              >
-                <I size={18} weight={page === id ? 'fill' : 'regular'} />
-                {t.nav[id]}
-              </button>
+          <nav className="grid gap-0.5">
+            {NAV.filter((n) => n.id !== 'settings').map(({ id, icon }) => (
+              <SideItem key={id} icon={icon} label={t.nav[id]} on={page === id} collapsed={collapsed} onClick={() => go(id)} />
             ))}
           </nav>
-          <Button variant="primary" className="mt-auto" onClick={add}>
-            <Plus size={16} weight="bold" />
-            {t.addTx}
-          </Button>
+          <div className="mt-auto grid gap-0.5">
+            <Button
+              variant="primary"
+              className={`mb-3 ${collapsed ? 'w-11 px-0' : ''}`}
+              onClick={add}
+              aria-label={collapsed ? t.addTx : undefined}
+              data-tip={collapsed ? t.addTx : undefined}
+              data-tip-side="right"
+            >
+              <Plus size={16} weight="bold" className="shrink-0" />
+              {!collapsed && <span className="overflow-hidden">{t.addTx}</span>}
+            </Button>
+            <SideItem icon={GearSix} label={t.nav.settings} on={page === 'settings'} collapsed={collapsed} onClick={() => go('settings')} />
+            <SideItem icon={SidebarSimple} label={collapsed ? t.expandSidebar : t.collapseSidebar} collapsed={collapsed} onClick={toggleSidebar} />
+          </div>
         </aside>
 
-        <main className="px-4 pt-6 pb-32 sm:px-6 md:px-8 md:pt-8 md:pb-12">
+        {/* relative: absolutely placed descendants (sr-only file inputs, popovers) belong to this scroller. Without it
+            they hang off the window and stretch it, so the window scrolls past the app into nothing. */}
+        <main className="relative px-4 pt-6 pb-32 sm:px-6 md:my-2 md:mr-2 md:overflow-y-auto md:bg-panel md:px-10 md:pt-10 md:pb-16 md:ring-1 md:ring-line">
           {(failed || clerkDown) && (
             <div
               role="status"
@@ -273,11 +337,11 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
         type="button"
         onClick={add}
         aria-label={t.addTx}
-        className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] grid size-14 place-items-center rounded-full bg-accent text-accent-fg shadow-lg shadow-zinc-900/25 transition active:scale-95 md:hidden"
+        className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] grid size-14 place-items-center bg-accent text-accent-fg shadow-[4px_4px_0_rgb(0_0_0/0.15)] transition active:scale-95 md:hidden"
       >
         <Plus size={24} weight="bold" />
       </button>
-      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-6 border-t border-zinc-200/80 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden dark:border-zinc-800 dark:bg-zinc-950/90">
+      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-6 border-t border-ink bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
         {NAV.map(({ id, icon: I }) => (
           <button
             key={id}

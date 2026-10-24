@@ -11,8 +11,8 @@ const toDate = (iso: string) => {
 const toIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 const chip = (on: boolean) =>
-  `h-8 rounded-full px-3 text-sm font-medium transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
-    on ? 'bg-accent text-accent-fg' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+  `h-8 px-3 text-sm font-medium ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+    on ? 'bg-accent text-accent-fg' : 'text-zinc-800 hover:bg-ink/5 dark:text-zinc-200'
   }`
 
 /**
@@ -72,10 +72,10 @@ export function DatePicker({
         </div>
         {quick && (
           <>
-            <button type="button" className={chip(value === today())} onClick={() => onChange(today())}>
+            <button type="button" aria-pressed={value === today()} className={chip(value === today())} onClick={() => onChange(today())}>
               {t.today}
             </button>
-            <button type="button" className={chip(value === yesterday)} onClick={() => onChange(yesterday)}>
+            <button type="button" aria-pressed={value === yesterday} className={chip(value === yesterday)} onClick={() => onChange(yesterday)}>
               {t.yesterday}
             </button>
           </>
@@ -84,7 +84,7 @@ export function DatePicker({
 
       {open && (
         <div
-          className={`anim-pop absolute top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-3 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700 ${
+          className={`anim-pop absolute top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-panel p-3 shadow-[6px_6px_0] ring-1 shadow-ink/10 ring-ink dark:shadow-black/50 ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >

@@ -35,7 +35,7 @@ const contrast = (a: RGB, b: RGB) => {
 
 const themes = [...css.matchAll(/:root(\.dark)?\[data-colorblind\] \{([^}]*)\}/g)].map(([, dark, body]) => ({
   name: dark ? 'dark' : 'light',
-  card: rgb(dark ? '#18181b' : '#ffffff'),
+  card: rgb(dark ? '#161513' : '#f6f3ec'), // --card: the paper
   colors: Object.fromEntries([...body.matchAll(/--color-(\w+): (#[0-9a-f]{6})/g)].map(([, k, v]) => [k, rgb(v)])),
 }))
 const PAIRS = [['income', 'expense'], ['income', 'investments'], ['expense', 'investments'], ['needs', 'wants'], ['needs', 'investments'], ['wants', 'investments']]

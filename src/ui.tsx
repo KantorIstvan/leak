@@ -5,9 +5,9 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { db, type Bucket, type Category, type Kind, type Settings } from './db'
 import type { Dict } from './i18n'
 import { ICONS } from './icons'
-import { avgMonthlyIncome, groupAmount, monthOf, shiftMonth, tint, today } from './lib'
+import { avgMonthlyIncome, groupAmount, monthOf, shiftMonth, tint, today, type Tier } from './lib'
 
-// Shape rules: buttons & inputs rounded-lg, cards & sheets rounded-2xl, chips rounded-full.
+// Shape rules: square corners everywhere (index.css zeroes the radius scale); rounded-full only for dots and switches.
 
 // --- App context ----------------------------------------------------------
 
@@ -23,15 +23,20 @@ export const Ctx = createContext<AppCtx>(null!)
 export const useApp = () => useContext(Ctx)
 
 export const BUCKET_BG: Record<Bucket, string> = { needs: 'bg-needs', wants: 'bg-wants', investments: 'bg-investments' }
+/** Score tier colours (monthScore); always next to the number or tier name, so colour is never the only cue. */
+export const TIER_TEXT: Record<Tier, string> = {
+  healthy: 'text-emerald-700 dark:text-emerald-400',
+  coping: 'text-amber-700 dark:text-amber-400',
+  vulnerable: 'text-rose-700 dark:text-rose-400',
+}
 
 // --- Primitives -----------------------------------------------------------
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-accent text-accent-fg hover:bg-accent-strong',
-  secondary:
-    'bg-white text-zinc-800 ring-1 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-zinc-700 dark:hover:bg-zinc-800',
-  ghost: 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
+  secondary: 'text-zinc-900 ring-1 ring-ink ring-inset hover:bg-ink/5 dark:text-zinc-100',
+  ghost: 'text-zinc-600 hover:bg-ink/5 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
   danger: 'text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50 dark:text-rose-300 dark:ring-rose-900 dark:hover:bg-rose-950',
 }
 
@@ -68,7 +73,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium whitespace-nowrap transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${VARIANTS[variant]} ${className}`}
+      className={`inline-flex h-10 items-center justify-center gap-2 px-4 text-[13px] font-medium tracking-[0.08em] whitespace-nowrap uppercase transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${VARIANTS[variant]} ${className}`}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       onClick={(e) => run(() => onClick?.(e))}
@@ -101,7 +106,7 @@ export function IconButton({ label, children, ...p }: ButtonHTMLAttributes<HTMLB
       type="button"
       aria-label={label}
       data-tip={label}
-      className="grid size-10 place-items-center rounded-lg text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+      className="grid size-10 place-items-center text-zinc-600 transition hover:bg-ink/5 hover:text-zinc-900 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent dark:text-zinc-400 dark:hover:text-zinc-100"
       {...p}
     >
       {children}
@@ -131,11 +136,11 @@ export function usePopover() {
 }
 
 export const popCls =
-  'anim-pop absolute z-20 mt-2 rounded-xl bg-white p-1 shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700'
+  'anim-pop absolute z-20 mt-2 bg-panel p-1 shadow-[6px_6px_0] ring-1 shadow-ink/10 ring-ink dark:shadow-black/50'
 
 /** Field-looking trigger button shared by the custom pickers. */
 export const triggerCls =
-  'flex items-center gap-2 rounded-lg bg-white px-3 text-left ring-1 ring-zinc-300 transition hover:ring-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:bg-zinc-950 dark:ring-zinc-700 dark:hover:ring-zinc-500'
+  'flex items-center gap-2 border-b border-ink px-3 text-left transition hover:bg-ink/5 focus-visible:bg-ink/5 focus-visible:outline-none'
 
 /** Dropdown with a styled option list instead of the OS <select>. */
 export function Select<T extends string>({
@@ -145,6 +150,7 @@ export function Select<T extends string>({
   label,
   icon,
   align = 'left',
+  compact,
 }: {
   value: T
   options: { value: T; label: string }[]
@@ -152,14 +158,15 @@ export function Select<T extends string>({
   label: string
   icon?: ReactNode
   align?: 'left' | 'right'
+  compact?: boolean // icon only on phones, no underline: sits in a toolbar
 }) {
   const p = usePopover()
   return (
     <div ref={p.ref} className="relative" onKeyDown={p.onKeyDown}>
-      <button type="button" aria-haspopup="listbox" aria-expanded={p.open} aria-label={label} onClick={() => p.setOpen(!p.open)} className={`${triggerCls} h-10 text-sm`}>
+      <button type="button" aria-haspopup="listbox" aria-expanded={p.open} aria-label={label} onClick={() => p.setOpen(!p.open)} className={`${triggerCls} h-10 text-sm ${compact ? 'border-transparent' : ''}`}>
         {icon}
-        <span className="whitespace-nowrap">{options.find((o) => o.value === value)?.label}</span>
-        <CaretDown size={14} weight="bold" className={`shrink-0 text-zinc-500 transition-transform ${p.open ? 'rotate-180' : ''}`} />
+        <span className={`whitespace-nowrap ${compact ? 'max-sm:hidden' : ''}`}>{options.find((o) => o.value === value)?.label}</span>
+        <CaretDown size={14} weight="bold" className={`shrink-0 text-zinc-500 transition-transform ${p.open ? 'rotate-180' : ''} ${compact ? 'max-sm:hidden' : ''}`} />
       </button>
       {p.open && (
         <ul role="listbox" aria-label={label} className={`${popCls} w-max min-w-full ${align === 'right' ? 'right-0' : 'left-0'}`}>
@@ -245,7 +252,7 @@ export function DayOfMonthPicker({ label, value, onChange, format }: { label: st
                 onChange(d)
                 p.setOpen(false)
               }}
-              className={`num grid aspect-square place-items-center rounded-full text-sm transition focus-visible:outline-2 focus-visible:outline-accent ${
+              className={`num grid aspect-square place-items-center text-sm transition focus-visible:outline-2 focus-visible:outline-accent ${
                 d === value ? 'bg-accent text-accent-fg' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'
               }`}
             >
@@ -284,7 +291,7 @@ export function ConfirmButton({ label, onConfirm }: { label: string; onConfirm: 
 }
 
 export const inputCls =
-  'h-11 w-full rounded-lg bg-white px-3 text-base text-zinc-900 ring-1 ring-zinc-300 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-accent sm:text-sm dark:bg-zinc-950 dark:text-zinc-100 dark:ring-zinc-700 dark:placeholder:text-zinc-500'
+  'h-11 w-full border-b border-ink bg-transparent px-3 text-base text-zinc-900 transition placeholder:text-zinc-500 focus:bg-ink/5 focus:outline-none sm:text-sm dark:text-zinc-100'
 
 /** Money field that groups thousands with spaces as you type, keeping the caret where it belongs. */
 export function MoneyInput({
@@ -331,8 +338,8 @@ export function MoneyInput({
 }
 
 export const chipCls = (on: boolean) =>
-  `flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium whitespace-nowrap transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
-    on ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+  `flex h-8 items-center gap-1.5 px-3 text-sm font-medium whitespace-nowrap ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+    on ? 'bg-accent text-accent-fg' : 'text-zinc-800 hover:bg-ink/5 dark:text-zinc-200'
   }`
 
 export function Field({ label, error, hint, children }: { label: string; error?: string; hint?: string; children: ReactNode }) {
@@ -358,7 +365,7 @@ export function Segmented<T extends string>({
   label: string
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex w-fit max-w-full overflow-x-auto rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800/70">
+    <div role="radiogroup" aria-label={label} className="inline-flex w-fit max-w-full overflow-x-auto p-1 ring-1 ring-ink ring-inset">
       {options.map((o) => (
         <button
           key={o.value}
@@ -366,10 +373,8 @@ export function Segmented<T extends string>({
           role="radio"
           aria-checked={o.value === value}
           onClick={() => onChange(o.value)}
-          className={`h-8 rounded-md px-3 text-sm font-medium whitespace-nowrap transition focus-visible:outline-2 focus-visible:outline-accent ${
-            o.value === value
-              ? 'bg-white text-zinc-900 shadow-sm shadow-zinc-900/5 dark:bg-zinc-700 dark:text-white'
-              : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+          className={`h-8 px-3 text-sm font-medium whitespace-nowrap transition focus-visible:outline-2 focus-visible:outline-accent ${
+            o.value === value ? 'bg-accent text-accent-fg' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
           }`}
         >
           {o.label}
@@ -379,14 +384,17 @@ export function Segmented<T extends string>({
   )
 }
 
+/** Sections and stat tiles: no box, a heavy ink rule on top and the content flush with it, as in print. */
+export const cardCls = 'border-t-2 border-ink'
+
 export function Card({ title, hint, action, children, className = '' }: { title?: string; hint?: string; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-2xl bg-white p-5 ring-1 ring-zinc-200/80 dark:bg-zinc-900 dark:ring-zinc-800 ${className}`}>
+    <section className={`${cardCls} min-w-0 pt-4 pb-6 ${className}`}>
       {(title || action) && (
-        <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            {title && <h2 className="text-base font-semibold tracking-tight">{title}</h2>}
-            {hint && <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">{hint}</p>}
+        <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            {title && <h2 className="font-display text-[1.375rem] leading-tight font-medium tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">{title}</h2>}
+            {hint && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{hint}</p>}
           </div>
           {action}
         </header>
@@ -398,33 +406,113 @@ export function Card({ title, hint, action, children, className = '' }: { title?
 
 export function Stat({ label, value, sub, tone, className = '' }: { label: string; value: string; sub?: string; tone?: string; className?: string }) {
   return (
-    <div className={`rounded-2xl bg-white p-4 ring-1 ring-zinc-200/80 sm:p-5 dark:bg-zinc-900 dark:ring-zinc-800 ${className}`}>
-      <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-        {tone && <span className={`size-2 rounded-full ${tone}`} aria-hidden />}
+    <div className={`${cardCls} min-w-0 pt-3 pb-2 ${className}`}>
+      <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">
+        {tone && <span className={`size-2 ${tone}`} aria-hidden />}
         {label}
       </div>
-      <div className="num mt-1.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">{value}</div>
-      {sub && <div className="num mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">{sub}</div>}
+      <div className="num mt-2 truncate font-display text-[1.75rem] leading-tight tracking-[-0.02em] sm:text-4xl">{value}</div>
+      {sub && <div className="num mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{sub}</div>}
     </div>
   )
 }
 
-export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+const h1Cls = 'font-display text-4xl leading-[1.05] tracking-[-0.03em] first-letter:uppercase md:text-5xl'
+
+/** Page title and actions. A non-string title (e.g. a PeriodPicker) brings its own heading. */
+export function PageHeader({ title, children }: { title: ReactNode; children?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <h1 className="text-2xl font-semibold tracking-tight first-letter:uppercase md:text-3xl">{title}</h1>
+      {typeof title === 'string' ? <h1 className={h1Cls}>{title}</h1> : title}
       {children && <div className="flex items-center gap-2">{children}</div>}
     </div>
   )
 }
 
-export function PeriodNav({ onPrev, onNext }: { onPrev: () => void; onNext: () => void }) {
+/**
+ * The page title as a button that opens a grid to jump elsewhere: `value` YYYY-MM picks a month (paging by year),
+ * YYYY picks a year (paging by 12 years, the shown one in the third row).
+ */
+export function PeriodPicker({ title, value, onChange }: { title: string; value: string; onChange: (v: string) => void }) {
+  const { t } = useApp()
+  const p = usePopover()
+  const months = value.length === 7
+  const first = months ? Number(value.slice(0, 4)) : Number(value) - 7
+  const [page, setPage] = useState(first)
+  const step = months ? 1 : 12
+  const now = months ? monthOf(today()) : today().slice(0, 4)
+  const short = new Intl.DateTimeFormat(t.locale, { month: 'short' })
+  const cells = Array.from({ length: 12 }, (_, i) =>
+    months ? { v: `${page}-${String(i + 1).padStart(2, '0')}`, label: short.format(new Date(page, i, 1)) } : { v: String(page + i), label: String(page + i) },
+  )
+  return (
+    <div ref={p.ref} className="relative" onKeyDown={p.onKeyDown}>
+      <h1 className={h1Cls}>
+        <button
+          type="button"
+          aria-expanded={p.open}
+          onClick={() => {
+            setPage(first)
+            p.setOpen(!p.open)
+          }}
+          className="-mx-2 flex items-center gap-2 rounded-lg px-2 transition hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-zinc-800/60"
+        >
+          {title}
+          <CaretDown size={18} weight="bold" className={`text-zinc-500 transition-transform ${p.open ? 'rotate-180' : ''}`} />
+        </button>
+      </h1>
+      {p.open && (
+        <div className={`${popCls} top-full left-0 w-72 p-3`}>
+          <div className="mb-2 flex items-center justify-between">
+            <IconButton label={t.prev} onClick={() => setPage(page - step)}>
+              <CaretLeft size={16} weight="bold" />
+            </IconButton>
+            <span className="num text-sm font-semibold">{months ? page : `${page} - ${page + 11}`}</span>
+            <IconButton label={t.next} onClick={() => setPage(page + step)}>
+              <CaretRight size={16} weight="bold" />
+            </IconButton>
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {cells.map((c) => (
+              <button
+                key={c.v}
+                type="button"
+                autoFocus={c.v === value}
+                aria-pressed={c.v === value}
+                onClick={() => {
+                  onChange(c.v)
+                  p.setOpen(false)
+                }}
+                className={`num h-10 rounded-lg text-sm capitalize transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+                  c.v === value ? 'bg-accent text-accent-fg' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                } ${c.v === now ? 'font-bold underline underline-offset-4' : ''}`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Previous / today / next. `onToday` is left out while the current period is already shown, which greys the button out. */
+export function PeriodNav({ onPrev, onNext, onToday }: { onPrev: () => void; onNext: () => void; onToday?: () => void }) {
   const { t } = useApp()
   return (
-    <div className="flex rounded-lg ring-1 ring-zinc-200 dark:ring-zinc-800">
+    <div className="flex divide-x divide-ink/25 ring-1 ring-ink ring-inset">
       <IconButton label={t.prev} onClick={onPrev}>
         <CaretLeft size={18} weight="bold" />
       </IconButton>
+      <button
+        type="button"
+        disabled={!onToday}
+        onClick={onToday}
+        className="h-10 min-w-14 px-3 text-sm font-semibold text-zinc-900 transition hover:bg-ink/5 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:font-medium disabled:text-zinc-500 dark:text-zinc-100 dark:disabled:text-zinc-500"
+      >
+        {t.today}
+      </button>
       <IconButton label={t.next} onClick={onNext}>
         <CaretRight size={18} weight="bold" />
       </IconButton>
@@ -464,7 +552,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
       {open && (
         <div className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:p-6">
           <header className="mb-5 flex items-center justify-between">
-            <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+            <h2 className="font-display text-2xl leading-tight tracking-[-0.01em]">{title}</h2>
             <IconButton label={t.cancel} onClick={onClose}>
               <X size={18} />
             </IconButton>
@@ -481,7 +569,7 @@ export function CatIcon({ c, size = 'md' }: { c?: Category; size?: 'sm' | 'md' }
   const color = c?.color ?? '#a1a1aa'
   const I = c?.icon ? ICONS[c.icon] : undefined
   return (
-    <span className={`grid shrink-0 place-items-center rounded-lg ${size === 'md' ? 'size-9' : 'size-7'}`} style={{ background: `${color}22`, color }} aria-hidden>
+    <span className={`grid shrink-0 place-items-center ${size === 'md' ? 'size-9' : 'size-7'}`} style={{ background: `${color}22`, color }} aria-hidden>
       {I ? <I size={size === 'md' ? 18 : 15} weight="duotone" /> : <span className="size-3 rounded-full" style={{ background: color }} />}
     </span>
   )
@@ -516,10 +604,8 @@ export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; v
                 type="button"
                 aria-pressed={on}
                 onClick={() => onChange(c.id)}
-                className={`flex h-9 items-center gap-2 rounded-full px-3 text-sm transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
-                  on
-                    ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-                    : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+                className={`flex h-9 items-center gap-2 px-3 text-sm ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+                  on ? 'bg-accent text-accent-fg' : 'text-zinc-800 hover:bg-ink/5 dark:text-zinc-200'
                 }`}
               >
                 {I ? (
@@ -663,7 +749,7 @@ export function Donut({
               content={({ active: shown, payload }) => {
                 const d = payload?.[0]?.payload as Slice | undefined
                 return shown && d ? (
-                  <div className="anim-fade rounded-lg bg-white px-3 py-2 text-sm shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">{tip.current?.(d)}</div>
+                  <div className="anim-fade bg-panel px-3 py-2 text-sm shadow-[4px_4px_0] ring-1 shadow-ink/10 ring-ink">{tip.current?.(d)}</div>
                 ) : null
               }}
             />
@@ -698,6 +784,7 @@ export function CategoryBars({
 }) {
   const { cat, money, t } = useApp()
   const [own, setOwn] = useState<string | null>(null)
+  const [all, setAll] = useState(false)
   const hover = onActive ? (active ?? null) : own
   const setHover = onActive ?? setOwn
   const max = rows[0]?.amount ?? 0
@@ -723,13 +810,13 @@ export function CategoryBars({
         )}
       >
         <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.sum}</span>
-        <span className="num text-lg font-semibold tracking-tight">{money(total, true)}</span>
+        <span className="num font-display tracking-[-0.02em] text-2xl leading-tight">{money(total, true)}</span>
       </Donut>
       <ul className="grid gap-3">
-        {rows.map((r) => {
+        {(all ? rows : rows.slice(0, LIST_MAX)).map((r, i) => {
           const c = cat.get(r.id)
           return (
-            <li key={r.id} className={`flex items-center gap-3 ${fade(hover, r.id)}`}>
+            <li key={r.id} className={`flex items-center gap-3 ${i >= LIST_MAX ? 'anim-fade-up' : ''} ${fade(hover, r.id)}`}>
               <CatIcon c={c} size="sm" />
               <div className="grid min-w-0 flex-1 gap-1.5">
                 <div className="flex items-baseline justify-between gap-3 text-sm">
@@ -739,12 +826,27 @@ export function CategoryBars({
                     <span className="ml-2 inline-block w-14 text-right text-zinc-500 dark:text-zinc-400">{pct.format(r.share)}</span>
                   </span>
                 </div>
-                <div className="anim-grow h-1.5 origin-left rounded-full" style={{ width: `${Math.max(2, (r.amount / max) * 100)}%`, background: c?.color ?? '#a1a1aa' }} />
+                <div className="anim-grow h-1.5 origin-left" style={{ width: `${Math.max(2, (r.amount / max) * 100)}%`, background: c?.color ?? '#a1a1aa' }} />
               </div>
             </li>
           )
         })}
       </ul>
+      {rows.length > LIST_MAX && <ShowMore open={all} hidden={rows.length - LIST_MAX} onToggle={() => setAll(!all)} className="-mt-3" />}
     </div>
+  )
+}
+
+/** Category rows shown before the list is expanded. */
+const LIST_MAX = 5
+
+/** "Show N more" / "Show less" under a list cut to its first rows. */
+export function ShowMore({ open, hidden, onToggle, className = '' }: { open: boolean; hidden: number; onToggle: () => void; className?: string }) {
+  const { t } = useApp()
+  return (
+    <Button variant="ghost" aria-expanded={open} onClick={onToggle} className={`justify-self-center ${className}`}>
+      {open ? t.showLess : t.showMore(hidden)}
+      <CaretDown size={14} weight="bold" className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+    </Button>
   )
 }

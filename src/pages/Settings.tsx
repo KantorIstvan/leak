@@ -4,11 +4,11 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { CaretUpDown, Check, CloudCheck, DownloadSimple, MagnifyingGlass, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
 import { add, replaceAll, saveSettings, wipeAll } from '../cloud'
 import { decodeCsv, missing, readCsv, sameName, toCsv, type Row } from '../csv'
-import { BUCKETS, db, exportBackup, rekey, type Backup, type Bucket, type Kind } from '../db'
+import { BUCKETS, DATA_COLORS, db, exportBackup, rekey, type Backup, type Bucket, type DataColor, type Kind } from '../db'
 import { currencySymbol, monthOf, today } from '../lib'
-import { BUCKET_BG, Button, Card, ConfirmButton, PageHeader, Segmented, Select, Switch, useApp, useMonthlyIncome } from '../ui'
+import { BUCKET_BG, Button, Card, ConfirmButton, PageHeader, Segmented, Select, Switch, triggerCls, useApp, useMonthlyIncome } from '../ui'
 import { desktop } from '../clerk'
-import { SWATCHES } from './Categories'
+import { ColorPicker, SWATCHES } from './Categories'
 
 // Every ISO 4217 currency the runtime knows about.
 const CURRENCIES = Intl.supportedValuesOf('currency')
@@ -21,10 +21,10 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title={t.nav.settings} />
-      <div className="grid max-w-3xl gap-4">
+      <div className="grid max-w-3xl gap-10">
         <AccountCard />
 
-        <Card>
+        <Card title={t.general}>
           <div className="grid gap-6">
             <div className="grid gap-2">
               <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.language}</span>
@@ -56,18 +56,110 @@ export function SettingsPage() {
                 options={(['24', '12'] as const).map((v) => ({ value: v, label: t.clocks[v] }))}
               />
             </div>
-            <Switch checked={!!s.colorblind} onChange={(colorblind) => update({ colorblind })} label={t.colorblind} hint={t.colorblindHint} />
             <div className="max-w-sm">
               <CurrencyPicker />
             </div>
           </div>
         </Card>
 
+        <ColorsCard />
         <Ratios />
         <CsvCard />
         <DataCard />
       </div>
     </>
+  )
+}
+
+/** Re-renders when <html>'s attributes change: light/dark, the colour-blind palette and picked colours all live there. */
+function useRootAttributes() {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const mo = new MutationObserver(() => tick((n) => n + 1))
+    mo.observe(document.documentElement, { attributes: true })
+    return () => mo.disconnect()
+  }, [])
+}
+
+/** The data colours, each with the system colour picker, over whatever light/dark and colour-blind mode would show. */
+function ColorsCard() {
+  const { t, s } = useApp()
+  useRootAttributes()
+  const css = getComputedStyle(document.documentElement)
+  return (
+    <Card
+      title={t.colors}
+      hint={t.colorsHint}
+      action={
+        s.colors && !s.colorblind && (
+          <Button variant="ghost" className="h-8 px-3" onClick={() => update({ colors: null })}>
+            {t.resetColors}
+          </Button>
+        )
+      }
+    >
+      <div className="grid">
+        {DATA_COLORS.map((k) => (
+          <ColorRow key={k} k={k} value={css.getPropertyValue(`--color-${k}`).trim()} />
+        ))}
+      </div>
+      <div className="mt-6">
+        <Switch checked={!!s.colorblind} onChange={(colorblind) => update({ colorblind })} label={t.colorblind} hint={t.colorblindHint} />
+      </div>
+    </Card>
+  )
+}
+
+function ColorRow({ k, value }: { k: DataColor; value: string }) {
+  const { t, s } = useApp()
+  const [open, setOpen] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const picked = s.colors?.[k]
+  const locked = !!s.colorblind // its palette is checked as a whole (palette.test.ts); a picked colour could break it
+  // The picker reports every step of a drag: each previews at once (inline on <html>, where App puts saved colours),
+  // the save waits until the dragging pauses.
+  const change = (hex: string) => {
+    document.documentElement.style.setProperty(`--color-${k}`, hex)
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      // A save that fails (offline, column missing) must not leave the preview looking like it stuck.
+      update({ colors: { ...s.colors, [k]: hex } }).catch((e) => {
+        const saved = s.colors?.[k]
+        if (saved) document.documentElement.style.setProperty(`--color-${k}`, saved)
+        else document.documentElement.style.removeProperty(`--color-${k}`)
+        throw e // on to main.tsx's "Could not save" alert
+      })
+    }, 400)
+  }
+  const reset = () => {
+    const { [k]: _, ...rest } = s.colors ?? {}
+    return update({ colors: Object.keys(rest).length ? rest : null })
+  }
+  return (
+    <div className="border-b border-line">
+      <div className="flex h-12 items-center gap-3">
+        <button
+          type="button"
+          aria-expanded={open && !locked}
+          disabled={locked}
+          onClick={() => setOpen(!open)}
+          className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="size-7 shrink-0 ring-1 ring-ink" style={{ background: value }} aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-sm">{t.colorNames[k]}</span>
+        </button>
+        {picked && !locked && (
+          <Button variant="ghost" className="h-8 px-2" onClick={reset}>
+            {t.resetColor}
+          </Button>
+        )}
+      </div>
+      {open && !locked && (
+        <div className="anim-pop pb-4">
+          <ColorPicker value={value} onChange={change} preview={null} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -84,7 +176,7 @@ function AccountCard() {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-4">
         <img src={user.imageUrl} alt="" className="size-14 shrink-0 rounded-full object-cover ring-1 ring-zinc-900/10 dark:ring-white/10" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-base font-semibold tracking-tight">{name}</div>
+          <div className="truncate font-display text-xl leading-tight">{name}</div>
           {email && email !== name && <div className="truncate text-sm text-zinc-600 dark:text-zinc-400">{email}</div>}
           <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
             <CloudCheck size={14} weight="bold" aria-hidden />
@@ -161,7 +253,7 @@ function CurrencyPicker() {
           setOpen(!open)
           setActive(0)
         }}
-        className="flex h-11 items-center gap-3 rounded-lg bg-white px-3 text-left text-base ring-1 ring-zinc-300 transition hover:ring-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:text-sm dark:bg-zinc-950 dark:ring-zinc-700 dark:hover:ring-zinc-500"
+        className={`${triggerCls} h-11 w-full gap-3 text-base sm:text-sm`}
       >
         <span className="num w-10 shrink-0 font-semibold">{s.currency}</span>
         <span className="flex-1 truncate text-zinc-600 dark:text-zinc-400">{current?.name}</span>
@@ -170,7 +262,7 @@ function CurrencyPicker() {
       <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.currencyHint}</span>
 
       {open && (
-        <div className="absolute inset-x-0 top-[4.75rem] z-20 overflow-hidden rounded-xl bg-white shadow-xl ring-1 shadow-zinc-900/10 ring-zinc-200 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-zinc-700">
+        <div className="absolute inset-x-0 top-[4.75rem] z-20 overflow-hidden bg-panel shadow-[6px_6px_0] ring-1 shadow-ink/10 ring-ink dark:shadow-black/50">
           <div className="relative border-b border-zinc-100 dark:border-zinc-800">
             <MagnifyingGlass size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-zinc-500" aria-hidden />
             <input
@@ -340,15 +432,15 @@ function Ratios() {
         ))}
       </div>
 
-      <dl className="mt-5 grid grid-cols-3 gap-3">
+      <dl className="mt-5 grid grid-cols-3 gap-x-6 gap-y-3">
         {BUCKETS.map((b) => (
           <div key={b} className="min-w-0">
             <dt className="flex items-center gap-2 truncate text-sm text-zinc-600 dark:text-zinc-400">
               <span className={`size-2.5 shrink-0 rounded-sm ${BUCKET_BG[b]}`} aria-hidden />
               {t.bucket[b]}
             </dt>
-            <dd className="num mt-1 text-2xl font-semibold tracking-tight">{r[b]}%</dd>
-            {income > 0 && <dd className="num truncate text-xs text-zinc-600 dark:text-zinc-400">{t.perMonthApprox(money(Math.round((income * r[b]) / 10000) * 100))}</dd>}
+            <dd className="num mt-1 font-display tracking-[-0.02em] text-3xl leading-tight">{r[b]}%</dd>
+            {income > 0 && <dd className="num text-xs text-zinc-600 dark:text-zinc-400">{t.perMonthApprox(money(Math.round((income * r[b]) / 10000) * 100))}</dd>}
           </div>
         ))}
       </dl>
@@ -363,7 +455,7 @@ function Ratios() {
               type="button"
               aria-pressed={on}
               onClick={() => save(p)}
-              className={`num h-8 rounded-full px-3 text-sm font-medium transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+              className={`num h-8 px-3 text-sm font-medium ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
                 on
                   ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
                   : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
@@ -396,7 +488,7 @@ async function save(text: string, name: string, type: string) {
 }
 
 const fileCls =
-  'inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg bg-white px-4 text-sm font-medium text-zinc-800 ring-1 ring-zinc-200 transition focus-within:outline-2 focus-within:outline-accent hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:ring-zinc-700 dark:hover:bg-zinc-800'
+  'inline-flex h-10 cursor-pointer items-center gap-2 px-4 text-[13px] font-medium tracking-[0.08em] text-zinc-900 uppercase ring-1 ring-ink ring-inset transition focus-within:outline-2 focus-within:outline-accent hover:bg-ink/5 dark:text-zinc-100'
 
 /** Year + month pickers for a "YYYY-MM" value. */
 function MonthPick({ label, value, years, onChange }: { label: string; value: string; years: string[]; onChange: (m: string) => void }) {

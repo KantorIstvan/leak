@@ -3,13 +3,12 @@ import { ui } from '@clerk/ui'
 import { Component, StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/geist'
+import '@fontsource-variable/newsreader' // headlines and big figures (font-display)
 import './index.css'
 import App from './App.tsx'
 import { appearance, clerk, desktop } from './clerk'
 import { DEFAULT_SETTINGS } from './db'
 import { Button } from './ui'
-
-if (import.meta.env.DEV && location.search.includes('demo')) import('./demo').then((m) => m.seedDemo())
 
 // The UI language until the account's settings load (App sets it from them); the messages below follow it.
 document.documentElement.lang = DEFAULT_SETTINGS.lang

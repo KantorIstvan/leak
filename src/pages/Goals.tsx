@@ -4,7 +4,7 @@ import { Plus } from '@phosphor-icons/react'
 import { add, remove, update } from '../cloud'
 import { db, type Goal } from '../db'
 import { byMonth, parseAmount, summarize, toInput } from '../lib'
-import { Button, ConfirmButton, Empty, Field, Form, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
+import { Button, cardCls, ConfirmButton, Empty, Field, Form, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
 
 export function GoalsPage() {
   const { t, money } = useApp()
@@ -33,7 +33,7 @@ export function GoalsPage() {
 
       {goals && !goals.length && <Empty title={t.emptyGoals} />}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2 xl:grid-cols-3">
         {goals?.map((g) => {
           const left = Math.max(0, g.target - g.saved)
           const pct = g.target ? Math.min(100, (g.saved / g.target) * 100) : 0
@@ -42,17 +42,17 @@ export function GoalsPage() {
               key={g.id}
               type="button"
               onClick={() => setEditing(g)}
-              className="rounded-2xl bg-white p-5 text-left ring-1 ring-zinc-200/80 transition hover:ring-zinc-300 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-accent dark:bg-zinc-900 dark:ring-zinc-800 dark:hover:ring-zinc-700"
+              className={`${cardCls} min-w-0 pt-4 pb-2 text-left transition hover:bg-ink/[0.03] focus-visible:outline-2 focus-visible:outline-accent`}
             >
               <div className="flex items-baseline justify-between gap-3">
-                <h2 className="truncate font-semibold">{g.name}</h2>
+                <h2 className="truncate font-display text-[1.375rem] leading-tight font-medium">{g.name}</h2>
                 <span className="num shrink-0 text-sm text-zinc-600 dark:text-zinc-400">{Math.round(pct)}%</span>
               </div>
-              <div className="num mt-3 text-xl font-semibold tracking-tight">
-                {money(g.saved)} <span className="text-base font-normal text-zinc-500 dark:text-zinc-400">/ {money(g.target)}</span>
+              <div className="num mt-3 font-display tracking-[-0.02em] text-3xl leading-tight">
+                {money(g.saved)} <span className="font-sans text-base tracking-normal text-zinc-500 dark:text-zinc-400">/ {money(g.target)}</span>
               </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
+              <div className="mt-3 h-2 overflow-hidden bg-line">
+                <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
               </div>
               <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
                 {left === 0 ? t.reached : avgProfit > 0 ? `${t.left(money(left))}, ${t.monthsToGo(Math.ceil(left / avgProfit))}` : t.noEstimate}
