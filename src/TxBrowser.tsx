@@ -2,12 +2,13 @@ import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Check, CheckSquare, FunnelSimple, Hash, PencilSimple, Plus, SortAscending, X } from '@phosphor-icons/react'
 import { remove, undoable, update } from './cloud'
-import { BUCKETS, db, type Bucket, type Kind, type Tx } from './db'
+import { BUCKETS, db, type Bucket, type Category, type Kind, type Tx } from './db'
 import { DatePicker } from './DatePicker'
 import { cleanTag, EMPTY_QUERY, filterCount, formatMoney, parseAmount, queryTxs, sameTag, tagTotals, type TxQuery, type TxSort } from './lib'
 import { ICONS } from './icons'
+import { CategoryPicker } from './pages/Categories'
 import {
-  Amount, BUCKET_BG, Button, CatIcon, fade, CategoryPicker, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, ShowMore, Switch, useApp, useMonthlyIncome,
+  Amount, BUCKET_BG, Button, CatIcon, fade, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, ShowMore, Switch, useApp, useMonthlyIncome,
 } from './ui'
 
 const SORTS: TxSort[] = ['date-desc', 'date-asc', 'amount-desc', 'amount-asc', 'category', 'note']
@@ -357,7 +358,7 @@ function TxList({
 
 /** Edits many transactions at once. Every field starts as "unchanged"; only what you touch is written. */
 function BulkForm({ txs, onDone }: { txs: Tx[]; onDone: (changed: boolean) => void }) {
-  const { t, cat } = useApp()
+  const { t } = useApp()
   const kinds = new Set(txs.map((tx) => tx.kind))
   const kind: Kind | null = kinds.size === 1 ? [...kinds][0] : null
   const hasExpense = kinds.has('expense')
@@ -368,10 +369,9 @@ function BulkForm({ txs, onDone }: { txs: Tx[]; onDone: (changed: boolean) => vo
   const [note, setNote] = useState('')
   const dirty = categoryId !== null || bucket !== 'keep' || moveDate || note.trim() !== ''
 
-  function pickCategory(id: string) {
-    setCategoryId(id)
-    const c = cat.get(id)
-    if (c?.kind === 'expense') setBucket(c.bucket)
+  function pickCategory(c: Category) {
+    setCategoryId(c.id)
+    if (c.kind === 'expense') setBucket(c.bucket)
   }
 
   async function save() {

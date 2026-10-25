@@ -90,6 +90,7 @@ export function Form({ onSubmit, children }: { onSubmit: () => unknown; children
       noValidate
       onSubmit={(e) => {
         e.preventDefault()
+        e.stopPropagation() // a form in a sheet opened from another form (portaled out) still bubbles into it in React
         run(onSubmit)
       }}
     >
@@ -684,7 +685,8 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
     <dialog
       ref={ref}
       className="sheet"
-      onClose={onClose}
+      // React bubbles a stacked sheet's close up to this one: only its own closes it.
+      onClose={(e) => e.target === e.currentTarget && onClose()}
       // Only a click that also started on the backdrop closes: a text selection dragged out of a field must not.
       onPointerDown={(e) => (down.current = e.target)}
       onClick={(e) => e.target === ref.current && down.current === ref.current && onClose()}
@@ -723,46 +725,6 @@ export const useCategoryUsage = () =>
     for (const id of (await db.txs.orderBy('categoryId').keys()) as string[]) n.set(id, (n.get(id) ?? 0) + 1)
     return n
   })
-
-/** Chip list of the categories of one kind, most used first so the usual picks sit up front. */
-export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; value: string | null; onChange: (id: string) => void; error?: string }) {
-  const { t, cats } = useApp()
-  const usage = useCategoryUsage()
-  return (
-    <fieldset className="grid gap-2">
-      <legend className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.category}</legend>
-      <div className="flex min-h-9 flex-wrap gap-2">
-        {usage &&
-          cats
-          .filter((c) => c.kind === kind)
-          .sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || a.name.localeCompare(b.name))
-          .map((c) => {
-            const on = c.id === value
-            const I = c.icon ? ICONS[c.icon] : undefined
-            return (
-              <button
-                key={c.id}
-                type="button"
-                aria-pressed={on}
-                onClick={() => onChange(c.id)}
-                className={`flex h-9 items-center gap-2 px-3 text-sm ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
-                  on ? 'bg-accent text-accent-fg' : 'text-zinc-800 hover:bg-ink/5 dark:text-zinc-200'
-                }`}
-              >
-                {I ? (
-                  <I size={16} weight="duotone" style={{ color: c.color }} aria-hidden />
-                ) : (
-                  <span className="size-2.5 rounded-full" style={{ background: c.color }} aria-hidden />
-                )}
-                {c.name}
-              </button>
-            )
-          })}
-      </div>
-      {error && <span className="anim-fade text-xs font-medium text-rose-700 dark:text-rose-400">{error}</span>}
-    </fieldset>
-  )
-}
 
 /** Average monthly income over the last 12 months: the yardstick for how "big" an amount is. */
 export function useMonthlyIncome() {

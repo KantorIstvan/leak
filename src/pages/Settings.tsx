@@ -84,6 +84,7 @@ function useRootAttributes() {
 function ColorsCard() {
   const { t, s } = useApp()
   useRootAttributes()
+  const [open, setOpen] = useState<DataColor | null>(null) // one picker at a time
   const css = getComputedStyle(document.documentElement)
   return (
     <Card
@@ -99,7 +100,7 @@ function ColorsCard() {
     >
       <div className="grid">
         {DATA_COLORS.map((k) => (
-          <ColorRow key={k} k={k} value={css.getPropertyValue(`--color-${k}`).trim()} />
+          <ColorRow key={k} k={k} value={css.getPropertyValue(`--color-${k}`).trim()} open={open === k} onToggle={() => setOpen(open === k ? null : k)} />
         ))}
       </div>
       <div className="mt-6">
@@ -109,9 +110,8 @@ function ColorsCard() {
   )
 }
 
-function ColorRow({ k, value }: { k: DataColor; value: string }) {
+function ColorRow({ k, value, open, onToggle }: { k: DataColor; value: string; open: boolean; onToggle: () => void }) {
   const { t, s } = useApp()
-  const [open, setOpen] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const picked = s.colors?.[k]
   const locked = !!s.colorblind // its palette is checked as a whole (palette.test.ts); a picked colour could break it
@@ -141,7 +141,7 @@ function ColorRow({ k, value }: { k: DataColor; value: string }) {
           type="button"
           aria-expanded={open && !locked}
           disabled={locked}
-          onClick={() => setOpen(!open)}
+          onClick={onToggle}
           className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           <span className="size-7 shrink-0 ring-1 ring-ink" style={{ background: value }} aria-hidden />
