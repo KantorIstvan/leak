@@ -10,6 +10,12 @@
     "updater:default",
     "process:allow-restart",
     "dialog:allow-save",
-    "fs:allow-write-text-file"
+    "dialog:allow-message",
+    "fs:allow-write-text-file",
+    "deep-link:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }]
+    }
   ]
 }

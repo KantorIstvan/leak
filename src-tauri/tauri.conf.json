@@ -47,6 +47,11 @@
     "createUpdaterArtifacts": true
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["leakbudget"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3MTg4OTg1NUM2N0RGQkYKUldTLzMyZGNoWWtZQjhkdGliZWpsUmZCSFIrZENydi95bEgzNThuc3BXY3FBSjJVRFB1eG1GckQK",
       "endpoints": [
