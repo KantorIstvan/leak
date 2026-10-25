@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { AuthenticateWithRedirectCallback, ClerkFailed, SignInButton, useAuth } from '@clerk/react'
-import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
-import { finishSso } from './clerk'
+import { ClerkFailed, SignInButton, useAuth } from '@clerk/react'
+import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
+import { desktop, finishSso, startSso } from './clerk'
 import { Commands } from './Commands'
 import { clearLocal, refresh, setToken, syncFailed } from './cloud'
 import { DATA_COLORS, db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
 import { dicts } from './i18n'
-import { formatMoney, monthOf, today } from './lib'
+import { formatMoney, monthOf, ssoReturn, today } from './lib'
 import { TxForm } from './TxSheet'
 import { Button, Ctx, Sheet, type AppCtx } from './ui'
 import { MonthPage } from './pages/Month'
@@ -103,28 +104,30 @@ function SideItem({ icon: I, label, on, collapsed, onClick }: { icon: Icon; labe
   )
 }
 
-// Desktop return from Google/GitHub: Clerk's native mode lands back on the app with ?rotating_token_nonce=….
-const ssoNonce = new URLSearchParams(location.search).get('rotating_token_nonce')
-let ssoStarted = false // StrictMode runs effects twice; the nonce only works once
 const reload = () => location.reload()
 
 export default function App() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
   // When Main can show: at once if this device holds the account's data from the last session, else after the first sync.
   const [data, setData] = useState<'wait' | 'ready' | 'failed'>('wait')
-  const [finishing, setFinishing] = useState(!!ssoNonce)
+  const [finishing, setFinishing] = useState(false)
+  // Desktop return from Google/GitHub: the OS hands the running app Clerk's leakbudget:// link, or starts Leak with it.
   useEffect(() => {
-    if (!isLoaded || !ssoNonce || ssoStarted) return
-    ssoStarted = true
-    finishSso(ssoNonce)
-      .catch((e) => {
-        console.error(e)
-        alert(dicts[DEFAULT_SETTINGS.lang].signInFailed)
-      })
-      .finally(() => {
-        history.replaceState(null, '', '/')
-        setFinishing(false)
-      })
+    if (!desktop || !isLoaded) return
+    const finish = (links: string[] | null) => {
+      const link = links?.find((l) => ssoReturn(l))
+      if (!link) return
+      setFinishing(true)
+      finishSso(link)
+        .catch((e) => {
+          console.error(e)
+          alert(`${dicts[DEFAULT_SETTINGS.lang].signInFailed}\n\n${e?.message ?? e}`)
+        })
+        .finally(() => setFinishing(false))
+    }
+    void getCurrent().then(finish)
+    const off = onOpenUrl(finish)
+    return () => void off.then((stop) => stop())
   }, [isLoaded])
   useEffect(() => {
     if (!isLoaded) return
@@ -154,9 +157,7 @@ export default function App() {
       </ClerkFailed>
     )
   if (finishing) return null
-  // A Google/GitHub account with no Leak user yet comes back unfinished, to #/sso-callback and without a nonce:
-  // Clerk's own callback turns that sign-in into a sign-up. Finished sign-ins come back with the nonce (above).
-  if (!isSignedIn) return location.hash.startsWith('#/sso-callback') ? <AuthenticateWithRedirectCallback /> : <SignedOut />
+  if (!isSignedIn) return <SignedOut />
   if (data === 'failed') return <NoConnection />
   return data === 'ready' ? <Main /> : null
 }
@@ -180,11 +181,47 @@ function Notice({ title, hint, children }: { title: string; hint: string; childr
 
 function SignedOut() {
   const t = dicts[DEFAULT_SETTINGS.lang]
+  const [waiting, setWaiting] = useState(false)
+  if (!desktop)
+    return (
+      <Notice title="Leak" hint={t.accountHint}>
+        <SignInButton mode="modal">
+          <Button variant="primary">{t.signIn}</Button>
+        </SignInButton>
+      </Notice>
+    )
+  // Desktop: Google/GitHub finish in the browser, and App hears back from it.
+  if (waiting)
+    return (
+      <Notice title="Leak" hint={t.ssoWaiting}>
+        <Button variant="ghost" onClick={() => setWaiting(false)}>
+          {t.cancel}
+        </Button>
+      </Notice>
+    )
+  const sso = (strategy: 'oauth_google' | 'oauth_github') =>
+    startSso(strategy).then(
+      () => setWaiting(true),
+      (e) => {
+        console.error(e)
+        alert(`${t.signInFailed}\n\n${e?.message ?? e}`)
+      },
+    )
   return (
     <Notice title="Leak" hint={t.accountHint}>
-      <SignInButton mode="modal">
-        <Button variant="primary">{t.signIn}</Button>
-      </SignInButton>
+      <div className="grid w-full gap-2">
+        <Button onClick={() => sso('oauth_google')}>
+          <GoogleLogo size={18} weight="bold" />
+          {t.continueGoogle}
+        </Button>
+        <Button onClick={() => sso('oauth_github')}>
+          <GithubLogo size={18} weight="bold" />
+          {t.continueGithub}
+        </Button>
+        <SignInButton mode="modal">
+          <Button variant="ghost">{t.signInEmail}</Button>
+        </SignInButton>
+      </div>
     </Notice>
   )
 }

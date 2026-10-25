@@ -59,8 +59,8 @@ createRoot(document.getElementById('root')!).render(
       standardBrowser={!desktop}
       publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
       afterSignOutUrl="/"
-      // Desktop: Google/GitHub must come back into the app (App.tsx finishes it), not to Clerk's account portal.
-      // After finishing, stay in the app instead of Clerk's default home URL (https://leakbudget.hu).
+      // Desktop: Clerk's own redirects (after an email sign-in, say) stay in the app instead of going to Clerk's
+      // account portal or its default home URL (https://leakbudget.hu). Google/GitHub run in the browser (startSso).
       {...(desktop && {
         signInUrl: `${location.origin}/`,
         signUpUrl: `${location.origin}/`,

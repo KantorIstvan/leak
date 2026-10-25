@@ -522,3 +522,17 @@ export function suggestNote(txs: Tx[], typed: string, kind: Tx['kind']): { note:
   const best = [...seen.values()].sort((a, b) => b.n - a.n || later(b.tx, a.tx))[0]
   return best && { note: best.tx.note.trim(), categoryId: best.tx.categoryId }
 }
+
+// --- Desktop sign-in ------------------------------------------------------
+
+/** Where Clerk sends the browser after a desktop Google/GitHub sign-in; the OS hands this link to Leak. */
+export const SSO_CALLBACK = 'leakbudget://sso-callback'
+
+/**
+ * Clerk's return link, with the nonce that redeems the sign-in (none for a brand-new account, which is finished as a
+ * sign-up). Null for any other link: anyone can open Leak with one.
+ */
+export function ssoReturn(link: string): { nonce: string | null } | null {
+  if (link.split('?')[0].replace(/\/$/, '') !== SSO_CALLBACK) return null
+  return { nonce: new URL(link).searchParams.get('rotating_token_nonce') }
+}

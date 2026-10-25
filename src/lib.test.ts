@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, suggestNote, summarize, tint, type TxQuery } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -17,6 +17,19 @@ describe('parseAmount', () => {
     expect(parseAmount('100000000000')).toBe(1e13)
     expect(parseAmount('100000000001')).toBeNull()
     expect(parseAmount('99999999999999999999')).toBeNull()
+  })
+})
+
+describe('ssoReturn', () => {
+  it('reads the nonce from Clerk’s return link', () => {
+    expect(ssoReturn('leakbudget://sso-callback?rotating_token_nonce=abc%3D')).toEqual({ nonce: 'abc=' })
+    expect(ssoReturn('leakbudget://sso-callback/?rotating_token_nonce=abc')).toEqual({ nonce: 'abc' })
+    // A brand-new account comes back without one, to be finished as a sign-up.
+    expect(ssoReturn('leakbudget://sso-callback')).toEqual({ nonce: null })
+  })
+  it('ignores any other link, since anyone can open Leak with one', () => {
+    for (const s of ['leakbudget://other?rotating_token_nonce=x', 'evil://sso-callback?rotating_token_nonce=x', 'https://sso-callback/?rotating_token_nonce=x', 'leakbudget://sso-callback#x', 'not a link', ''])
+      expect(ssoReturn(s)).toBeNull()
   })
 })
 

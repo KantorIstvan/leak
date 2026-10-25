@@ -1,5 +1,7 @@
 // Clerk is bundled rather than fetched from Clerk's CDN, so the app still opens offline.
 import { Clerk } from '@clerk/clerk-js'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { SSO_CALLBACK, ssoReturn } from './lib'
 
 export const desktop = '__TAURI_INTERNALS__' in window
 
@@ -43,12 +45,15 @@ export const appearance = {
     formFieldInput:
       'h-11 border-0 shadow-none ring-1 ring-zinc-300 transition focus:ring-2 focus:ring-[var(--ui-accent)] dark:ring-zinc-700',
     footer: 'border-t border-zinc-100 bg-none bg-transparent dark:border-zinc-800',
+    // Desktop signs in with Google/GitHub through the system browser from App's own buttons. Clerk's buttons for that,
+    // and for connecting an account later, would run it in the webview, which Google refuses.
+    ...(desktop && { socialButtonsRoot: 'hidden', dividerRow: 'hidden', profileSection__connectedAccounts: 'hidden' }),
   },
 } as const
 export const clerk = new Clerk(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 
 const TOKEN = 'leak-clerk-client'
-const FLOW = 'leak-clerk-flow' // the sign-in/up a Google/GitHub redirect belongs to, e.g. "sign_ins/sia_…"
+const FLOW = 'leak-clerk-flow' // the Google/GitHub sign-in in the browser, e.g. "sign_ins/sia_…", with its client token
 
 if (desktop) {
   // The window's origin (tauri.localhost) is a different site than clerk.leakbudget.hu, so the webview never
@@ -61,29 +66,39 @@ if (desktop) {
   clerk.__internal_onAfterResponse((_, res) => {
     const token = res?.headers.get('authorization')
     if (token) localStorage.setItem(TOKEN, token)
-    // Remember the flow with the token it belongs to: the redirect rotates that token, and after the reload the
-    // first requests already hand out a fresh, empty client's token. The nonce only redeems with the old one.
-    const id = (res?.payload?.response as { id?: unknown } | null | undefined)?.id
-    if (typeof id === 'string' && /^s[iu]a_/.test(id))
-      localStorage.setItem(FLOW, JSON.stringify({ path: `${id.startsWith('sia_') ? 'sign_ins' : 'sign_ups'}/${id}`, token: localStorage.getItem(TOKEN) ?? '' }))
   })
 }
 
 /**
- * Desktop return from Google/GitHub, which lands on ?rotating_token_nonce=…. The redirect rotated the client token
- * and the page reload dropped the in-flight sign-in, so redeem the nonce on that sign-in (as Clerk's mobile SDKs do)
- * to get the rotated token back, then activate the session it created. No redirect ever leaves the app.
+ * Desktop Google/GitHub sign-in runs in the system browser, as RFC 8252 asks of native apps: Google refuses embedded
+ * webviews, and the browser already knows the user. Clerk then sends the browser to SSO_CALLBACK, which the OS hands
+ * to Leak (App.tsx). Remember the sign-in with the token it belongs to: finishing it in the browser rotates that token
+ * and the nonce only redeems with the old one.
  */
-export async function finishSso(nonce: string) {
+export async function startSso(strategy: 'oauth_google' | 'oauth_github') {
+  const signIn = await clerk.client!.signIn.create({ strategy, redirectUrl: SSO_CALLBACK, actionCompleteRedirectUrl: SSO_CALLBACK })
+  localStorage.setItem(FLOW, JSON.stringify({ path: `sign_ins/${signIn.id}`, token: localStorage.getItem(TOKEN) ?? '' }))
+  await openUrl(signIn.firstFactorVerification.externalVerificationRedirectURL!.href)
+}
+
+/**
+ * Desktop return from Google/GitHub: the leakbudget:// link Clerk sent the browser to. Its nonce redeems the sign-in
+ * (as Clerk's mobile SDKs do) for the rotated token, then the session it created is activated. A brand-new account
+ * comes back without one, to be finished as a sign-up. Any other link, or one without a sign-in in progress, is ignored.
+ */
+export async function finishSso(link: string) {
+  const back = ssoReturn(link)
   const saved = localStorage.getItem(FLOW)
-  if (!saved) return
+  if (!back || !saved) return
+  localStorage.removeItem(FLOW) // one link, one sign-in: the nonce only works once
   const flow = JSON.parse(saved) as { path: string; token: string }
-  const url = `https://${clerk.frontendApi}/v1/client/${flow.path}?_is_native=1&_clerk_js_version=${clerk.version}&rotating_token_nonce=${encodeURIComponent(nonce)}`
-  const res = await fetch(url, { headers: { authorization: flow.token } })
-  if (!res.ok) throw new Error(`Sign-in could not be finished (${res.status})`)
-  const token = res.headers.get('authorization')
-  if (token) localStorage.setItem(TOKEN, token)
-  localStorage.removeItem(FLOW)
+  if (back.nonce) {
+    const url = `https://${clerk.frontendApi}/v1/client/${flow.path}?_is_native=1&_clerk_js_version=${clerk.version}&rotating_token_nonce=${encodeURIComponent(back.nonce)}`
+    const res = await fetch(url, { headers: { authorization: flow.token } })
+    if (!res.ok) throw new Error(`Sign-in could not be finished (${res.status})`)
+    const token = res.headers.get('authorization')
+    if (token) localStorage.setItem(TOKEN, token)
+  }
 
   const client = await clerk.client!.reload()
   const { signIn, signUp } = client
