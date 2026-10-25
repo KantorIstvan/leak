@@ -1,6 +1,6 @@
 [package]
 name = "leak"
-version = "0.11.0"
+version = "0.11.1"
 description = "Leak - personal finance tracker"
 edition = "2021"
 license = "AGPL-3.0-or-later"
@@ -22,3 +22,8 @@ tauri-plugin-fs = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+# tauri-plugin-deep-link 2.6.2 builds rust-ini's ParseOption without the two fields 0.21.3 added, so the Linux build
+# fails with anything newer. Drop this pin once the plugin builds against the latest rust-ini.
+[target.'cfg(target_os = "linux")'.dependencies]
+rust-ini = "=0.21.1"
