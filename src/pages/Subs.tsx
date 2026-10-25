@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus } from '@phosphor-icons/react'
 import { add, chargeId, remove, syncSubs, undoable, update } from '../cloud'
-import { BUCKETS, db, type Bucket, type Sub } from '../db'
+import { BUCKETS, db, type Bucket, type Category, type Sub } from '../db'
 import { convert, rate } from '../fx'
 import { formatMoney, monthOf, parseAmount, reviewDue, shiftMonth, today, toInput } from '../lib'
-import { Button, Card, cardCls, CatIcon, CategoryPicker, ConfirmButton, CurrencySelect, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp } from '../ui'
+import { CategoryPicker } from './Categories'
+import { Button, Card, cardCls, CatIcon, ConfirmButton, CurrencySelect, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp } from '../ui'
 
 /** Today's rate into `base` for each of `codes`; one that is loading or unavailable is missing. */
 function useRates(codes: string[], base: string) {
@@ -170,9 +171,9 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
   const [bucket, setBucket] = useState<Bucket>(sub?.bucket ?? (categoryId ? cat.get(categoryId)?.bucket : undefined) ?? 'needs')
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
 
-  function pickCategory(id: string) {
-    setCategoryId(id)
-    setBucket(cat.get(id)?.bucket ?? bucket)
+  function pickCategory(c: Category) {
+    setCategoryId(c.id)
+    setBucket(c.bucket)
   }
 
   async function submit() {

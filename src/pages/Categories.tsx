@@ -1,11 +1,14 @@
 import { useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { add, remove, undoable, update } from '../cloud'
 import { BUCKETS, db, type Bucket, type Category, type Kind } from '../db'
-import { ICON_GROUPS } from '../icons'
+import { ICON_GROUPS, ICONS } from '../icons'
 import { hexToHsv, hsvToHex, parseAmount, toInput } from '../lib'
-import { BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, Form, inputCls, MoneyInput, PageHeader, SearchInput, Segmented, Sheet, useApp } from '../ui'
+import {
+  BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, Form, inputCls, MoneyInput, PageHeader, SearchInput, Segmented, Sheet, useApp, useCategoryUsage,
+} from '../ui'
 
 type Editing = Category | { kind: Kind } | null
 
@@ -80,6 +83,74 @@ export function CategoriesPage() {
         {editing && <CategoryForm editing={editing} onDone={() => setEditing(null)} />}
       </Sheet>
     </>
+  )
+}
+
+/**
+ * Chip list of the categories of one kind, most used first so the usual picks sit up front. A missing one can be made
+ * on the spot: its form opens over the one the picker sits in, and the new category comes back picked.
+ */
+export function CategoryPicker({ kind, value, onChange, error }: { kind: Kind; value: string | null; onChange: (c: Category) => void; error?: string }) {
+  const { t, cats } = useApp()
+  const usage = useCategoryUsage()
+  const [adding, setAdding] = useState(false)
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.category}</legend>
+      <div className="flex min-h-9 flex-wrap gap-2">
+        {usage && (
+          <>
+            {cats
+              .filter((c) => c.kind === kind)
+              .sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || a.name.localeCompare(b.name))
+              .map((c) => {
+                const on = c.id === value
+                const I = c.icon ? ICONS[c.icon] : undefined
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onChange(c)}
+                    className={`flex h-9 items-center gap-2 px-3 text-sm ring-1 ring-ink ring-inset transition active:scale-95 focus-visible:outline-2 focus-visible:outline-accent ${
+                      on ? 'bg-accent text-accent-fg' : 'text-zinc-800 hover:bg-ink/5 dark:text-zinc-200'
+                    }`}
+                  >
+                    {I ? (
+                      <I size={16} weight="duotone" style={{ color: c.color }} aria-hidden />
+                    ) : (
+                      <span className="size-2.5 rounded-full" style={{ background: c.color }} aria-hidden />
+                    )}
+                    {c.name}
+                  </button>
+                )
+              })}
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="flex h-9 items-center gap-1.5 px-2 text-sm text-zinc-500 transition hover:text-zinc-900 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent dark:text-zinc-400 dark:hover:text-zinc-100"
+            >
+              <Plus size={14} weight="bold" aria-hidden />
+              {t.newCategory}
+            </button>
+          </>
+        )}
+      </div>
+      {error && <span className="anim-fade text-xs font-medium text-rose-700 dark:text-rose-400">{error}</span>}
+      {/* In <body>, as forms cannot nest. Kept mounted so closing hands the focus back to the button. */}
+      {createPortal(
+        <Sheet open={adding} onClose={() => setAdding(false)} title={t.newCategory}>
+          <CategoryForm
+            editing={{ kind }}
+            onDone={(made) => {
+              setAdding(false)
+              if (made) onChange(made)
+            }}
+          />
+        </Sheet>,
+        document.body,
+      )}
+    </fieldset>
   )
 }
 
@@ -241,7 +312,8 @@ export function ColorPicker({ value, onChange, preview }: { value: string; onCha
   )
 }
 
-function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind }; onDone: () => void }) {
+/** `onDone` gets the category it made, if it made one. */
+function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind }; onDone: (made?: Category) => void }) {
   const { t, cats } = useApp()
   const existing = 'id' in editing ? editing : undefined
   const [name, setName] = useState(existing?.name ?? '')
@@ -259,9 +331,10 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
     if (!name.trim() || (limit.trim() && !cap)) return
     // No limit sends no field, unless it clears one set before.
     const data = { name: name.trim(), color, bucket, icon, kind: editing.kind, ...(cap ? { limit: cap } : existing?.limit && { limit: null }) }
-    if (existing) await update('categories', [existing.id], data)
-    else await add('categories', [data])
-    onDone()
+    if (existing) {
+      await update('categories', [existing.id], data)
+      onDone()
+    } else onDone((await add('categories', [data]))[0])
   }
 
   const used = useLiveQuery(
@@ -329,7 +402,7 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
       <div className="flex flex-wrap items-center justify-between gap-3">
         {existing ? <ConfirmButton label={t.delete} onConfirm={removeCategory} /> : <span />}
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onDone}>
+          <Button variant="ghost" onClick={() => onDone()}>
             {t.cancel}
           </Button>
           <Button variant="primary" type="submit">

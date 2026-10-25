@@ -2,11 +2,12 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import { X } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { add, remove, update } from './cloud'
-import { BUCKETS, db, type Bucket, type Kind, type Tx } from './db'
+import { BUCKETS, db, type Bucket, type Category, type Kind, type Tx } from './db'
 import { DatePicker } from './DatePicker'
 import { convert, parseRate, rate, type Quote } from './fx'
 import { cleanTag, fold, parseAmount, sameTag, suggestNote, tagTotals, toInput } from './lib'
-import { BUCKET_BG, Button, CategoryPicker, ConfirmButton, CurrencySelect, Field, Form, inputCls, MoneyInput, popCls, Segmented, useApp } from './ui'
+import { CategoryPicker } from './pages/Categories'
+import { BUCKET_BG, Button, ConfirmButton, CurrencySelect, Field, Form, inputCls, MoneyInput, popCls, Segmented, useApp } from './ui'
 
 /** The rate from `from` into `to` on `day`, 'loading' until it is in; null for the same currency. */
 function useQuote(from: string, to: string, day: string) {
@@ -81,16 +82,16 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
     setCategoryId(null)
   }
 
-  function pickCategory(id: string) {
-    setCategoryId(id)
-    const c = cat.get(id)
-    if (c?.kind === 'expense') setBucket(c.bucket)
+  function pickCategory(c: Category) {
+    setCategoryId(c.id)
+    if (c.kind === 'expense') setBucket(c.bucket)
   }
 
   function acceptHint() {
     if (!hint) return
     setNote(hint.note)
-    if (!categoryId && cat.get(hint.categoryId)) pickCategory(hint.categoryId)
+    const c = cat.get(hint.categoryId)
+    if (!categoryId && c) pickCategory(c)
   }
 
   // A new day or currency means a new published rate, so a hand-typed one no longer applies.
