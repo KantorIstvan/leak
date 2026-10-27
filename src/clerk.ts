@@ -1,6 +1,7 @@
 // Clerk is bundled rather than fetched from Clerk's CDN, so the app still opens offline.
 import { Clerk } from '@clerk/clerk-js'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { deleteAccountData } from './cloud'
 import { SSO_CALLBACK, ssoReturn } from './lib'
 
 export const desktop = '__TAURI_INTERNALS__' in window
@@ -54,6 +55,15 @@ export const clerk = new Clerk(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
 
 const TOKEN = 'leak-clerk-client'
 const FLOW = 'leak-clerk-flow' // the Google/GitHub sign-in in the browser, e.g. "sign_ins/sia_…", with its client token
+
+// "Delete account" in Clerk's profile screen deletes only the Clerk user; the account's data goes first. A failure throws,
+// which stops the deletion and shows there (returning false would make Clerk fake a success). Registered before the
+// native-mode hook below, so the request carries the client token as it is after the wipe.
+// ponytail: deletions made elsewhere (account portal, dashboard) keep the rows, and another open device can refill the
+// account in its token's last minute (setUp); a Clerk user.deleted webhook that wipes and blocks the user closes both.
+clerk.__internal_onBeforeRequest(async (req) => {
+  if (req.method === 'DELETE' && req.path === '/me') await deleteAccountData()
+})
 
 if (desktop) {
   // The window's origin (tauri.localhost) is a different site than clerk.leakbudget.hu, so the webview never

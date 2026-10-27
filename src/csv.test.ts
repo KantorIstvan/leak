@@ -50,6 +50,17 @@ describe('csv', () => {
     expect(readCsv('note,category\nx,y', 'U')).toBeNull()
   })
 
+  it('exports notes and categories that look like formulas as text, and reads them back as they were', () => {
+    const name = (id: string) => (id === 'odd' ? '+36 phone' : catName(id))
+    const csv = toCsv([tx({ note: '=HYPERLINK("http://x","click")' }), tx({ id: '1', categoryId: 'odd', note: '@SUM(A1)' }), tx({ id: '2', note: '-5% off' })], name)
+    expect(csv).not.toMatch(/(^|,)"?[=+\-@]/m) // no cell a spreadsheet would evaluate
+    expect(readCsv(csv, 'U')!.rows.map((r) => [r.category, r.note])).toEqual([
+      ['Food', '=HYPERLINK("http://x","click")'],
+      ['+36 phone', '@SUM(A1)'],
+      ['Food', '-5% off'],
+    ])
+  })
+
   it('keeps newlines inside quotes', () => {
     expect(parseCsv('a,b\r\n"x\ny",2')).toEqual([['a', 'b'], ['x\ny', '2']])
   })

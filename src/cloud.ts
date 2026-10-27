@@ -321,6 +321,7 @@ export function diff<R extends { id: unknown }>(local: R[], server: R[], keep: (
 let started = 0 // pulls started
 let applied = 0 // the newest pull mirrored so far: an older one that finishes later must not roll the mirror back
 let replacing = false
+let leaving = false // the account is being deleted: nothing may fill it again
 
 /**
  * Brings the mirror in line with the server: picks up edits made on other devices. Only rows that differ are
@@ -335,7 +336,7 @@ export async function pull() {
     const [categories, txs, goals, subs, settings] = await Promise.all([...TABLES, 'settings' as const].map(fetchAll))
     // No settings: a new account, or a replace that stopped halfway (see replaceAll). Neither is mirrored.
     if (!settings.length) {
-      if (!replacing) await setUp()
+      if (!replacing && !leaving) await setUp()
       return
     }
     // A replace running meanwhile may show up half done in this snapshot; it mirrors its own result when finished.
@@ -382,15 +383,29 @@ export async function replaceAll(b: Backup) {
   replacing = true
   clearHistory() // every row gets a new id: nothing in the history exists any more
   try {
-    ok(await sb.from('settings').delete().not('user_id', 'is', null))
-    // Children first: a category can't go while a tx or subscription still points at it.
-    for (const t of ['txs', 'subs', 'goals', 'categories'] as const) ok(await sb.from(t).delete().not('id', 'is', null))
+    await wipe()
     for (const t of TABLES) for (const c of chunks<object>(b[t] ?? [], 500)) ok(await sb.from(t).insert(c.map(toRow)))
     ok(await sb.from('settings').insert(settingsRow(b.settings[0])))
   } finally {
     replacing = false
   }
   await pull()
+}
+
+/** Deletes all of the user's rows on the server, settings first (see replaceAll). */
+async function wipe() {
+  ok(await sb.from('settings').delete().not('user_id', 'is', null))
+  // Children first: a category can't go while a tx or subscription still points at it.
+  for (const t of ['txs', 'subs', 'goals', 'categories'] as const) ok(await sb.from(t).delete().not('id', 'is', null))
+}
+
+/**
+ * Erases the account's data just before Clerk deletes the account (clerk.ts), which only removes the user.
+ * Should either step fail, the next launch puts this device's copy back (setUp), as after a replace that stopped.
+ */
+export async function deleteAccountData() {
+  leaving = true // a pull meanwhile (the window got focus) must not put this device's copy back
+  await wipe()
 }
 
 /** Deletes everything but the settings. */
