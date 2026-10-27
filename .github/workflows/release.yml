@@ -26,8 +26,11 @@ jobs:
             args: ''
     runs-on: ${{ matrix.platform }}
 
+    # Actions are pinned to commits, not tags: this job holds the key that signs every update, and a tag can be moved.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false # nothing here pushes; keeps the write token out of reach of npm and the build
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -35,22 +38,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: lts/*
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: './src-tauri -> target'
 
-      - run: npm ci
+      # No dependency install scripts: the only ones in the tree print thank-you banners (core-js, browser-tabs-lock).
+      - run: npm ci --ignore-scripts
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signs the update bundles + latest.json the in-app updater reads.

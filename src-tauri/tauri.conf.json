@@ -22,7 +22,19 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: https://img.clerk.com",
+        "font-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost https://clerk.leakbudget.hu https://vtiyvfxahxrtpraxfync.supabase.co https://api.frankfurter.dev",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {

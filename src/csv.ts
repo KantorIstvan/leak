@@ -36,7 +36,13 @@ const BUCKET_NAMES: Record<string, Bucket> = {
   needs: 'needs', szukseglet: 'needs', wants: 'wants', vagy: 'wants', investments: 'investments', befektetes: 'investments',
 }
 
-const cell = (v: string) => (/[",;\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+// A note or category Excel would run as a formula (=, +, -, @) gets a leading ' so it opens as text; readCsv takes it off.
+const FORMULA = /^[=+\-@\t\r]/
+const cell = (v: string) => {
+  if (FORMULA.test(v)) v = `'${v}`
+  return /[",;\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+const uncell = (v: string) => (v.startsWith("'") && FORMULA.test(v.slice(1)) ? v.slice(1) : v)
 
 /** Comma-separated with a BOM, so Excel opens the accents right. */
 export function toCsv(txs: Tx[], catName: (id: string) => string) {
@@ -154,9 +160,9 @@ export function readCsv(text: string, fallbackCategory: string): { rows: Row[]; 
       date,
       kind,
       amount,
-      category: get(line, 'category') || fallbackCategory,
+      category: uncell(get(line, 'category')) || fallbackCategory,
       bucket: kind === 'income' ? null : (BUCKET_NAMES[fold(get(line, 'bucket'))] ?? null),
-      note: get(line, 'note'),
+      note: uncell(get(line, 'note')),
     })
   })
   return { rows, bad }
