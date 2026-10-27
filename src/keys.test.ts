@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clash, comboOf, DEFAULT_KEYS, keycaps, keymap, match, overrides } from './keys'
+import { clash, comboOf, DEFAULT_KEYS, keycaps, keymap, match, overrides, reserved } from './keys'
 
 const press = (key: string, p: Partial<KeyboardEvent> & { altGr?: boolean } = {}) => ({
   key,
@@ -45,6 +45,12 @@ describe('keys', () => {
     expect(clash(map, 'G')).toBe('goMonth') // would swallow every G sequence
     expect(clash(map, 'N X')).toBe('add') // N would fire before X
     expect(clash(map, 'Mod+J')).toBeUndefined()
+  })
+
+  it('keeps the Mac window keys out of reach', () => {
+    expect(reserved('Mod+Q')).toBe(true)
+    expect(reserved('Mod+W')).toBe(true)
+    expect(reserved('Mod+Shift+W')).toBe(false)
   })
 
   it('stores only what differs from the defaults', () => {

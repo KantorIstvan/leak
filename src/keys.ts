@@ -90,8 +90,12 @@ export function clash(map: Keymap, binding: string): CommandId | undefined {
   return COMMANDS.find((id) => map[id].some((b) => b === binding || b.startsWith(`${binding} `) || binding.startsWith(`${b} `)))
 }
 
-/** Keys that keep their usual job on their own: Tab moves focus, Esc closes, Enter and Space press buttons. */
-export const reserved = (combo: string) => ['Tab', 'Shift+Tab', 'Escape', 'Enter', 'Space', 'Backspace'].includes(combo)
+/**
+ * Keys that keep their usual job: Tab moves focus, Esc closes, Enter and Space press buttons, and on a Mac
+ * ⌘Q quits, ⌘W closes, ⌘H hides and ⌘M minimises. Kept everywhere, since the keys sync to the Mac too.
+ */
+export const reserved = (combo: string) =>
+  ['Tab', 'Shift+Tab', 'Escape', 'Enter', 'Space', 'Backspace', 'Mod+Q', 'Mod+W', 'Mod+H', 'Mod+M'].includes(combo)
 
 const NAMES: Record<string, [string, string]> = {
   // [Mac, elsewhere]
