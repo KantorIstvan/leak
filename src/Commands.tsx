@@ -6,7 +6,7 @@ import { ArrowCounterClockwise, CalendarBlank, Keyboard, MagnifyingGlass, Plus, 
 import { history, redo, saveSettings, undo } from './cloud'
 import { db, type Tx } from './db'
 import type { Dict } from './i18n'
-import { chorded, clash, COMMANDS, comboOf, DEFAULT_KEYS, keycaps, keymap, match, overrides, reserved, type CommandId, type Keymap } from './keys'
+import { chorded, clash, COMMANDS, comboOf, DEFAULT_KEYS, keycaps, keymap, MAC, match, overrides, reserved, type CommandId, type Keymap } from './keys'
 import { EMPTY_QUERY, monthOf, queryTxs, shiftMonth, today } from './lib'
 import { Button, Card, CatIcon, Sheet, useApp } from './ui'
 
@@ -344,10 +344,12 @@ function Palette({
             setActive(0)
           }}
           onKeyDown={(e) => {
-            if (e.key === 'ArrowDown') setActive((at + 1) % flat.length)
+            // To the ends: ⌘↑ / ⌘↓ on a Mac (which has no Home/End key), Ctrl+Home / Ctrl+End elsewhere.
+            const jump = MAC ? e.metaKey : e.ctrlKey
+            if (jump && (e.key === 'Home' || e.key === 'ArrowUp')) setActive(0)
+            else if (jump && (e.key === 'End' || e.key === 'ArrowDown')) setActive(flat.length - 1)
+            else if (e.key === 'ArrowDown') setActive((at + 1) % flat.length)
             else if (e.key === 'ArrowUp') setActive((at - 1 + flat.length) % flat.length)
-            else if (e.key === 'Home' && e.ctrlKey) setActive(0)
-            else if (e.key === 'End' && e.ctrlKey) setActive(flat.length - 1)
             else if (e.key === 'Enter') choose(flat[at])
             else return
             e.preventDefault()
