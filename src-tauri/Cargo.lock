@@ -2037,6 +2037,7 @@ dependencies = [
 name = "leak"
 version = "0.12.2"
 dependencies = [
+ "glib",
  "rust-ini",
  "serde_json",
  "tauri",

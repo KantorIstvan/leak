@@ -75,6 +75,7 @@
   --ui-muted-fg: #5c574d;
   --ui-line: #d8d2c4;
   --ui-field: #f6f3ec;
+  --ui-danger: #b3261e;
 }
 
 .dark {
@@ -99,6 +100,7 @@
   --ui-muted-fg: #a8a194;
   --ui-line: #2e2b27;
   --ui-field: #0f0e0d;
+  --ui-danger: #e35d4f;
 }
 
 /* Colour-blind mode, one palette per light/dark. Colours that share a view (income/expense/investments,

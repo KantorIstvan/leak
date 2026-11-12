@@ -18,7 +18,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/month-dark.webp">
-  <img src="docs/screenshots/month-light.webp" alt="Month view: what's left, income, expenses, the budget split per bucket, spending by category and the month's transactions">
+  <img src="docs/screenshots/month-light.webp" alt="Month view: what's left, income, expenses, the monthly score, the budget split per bucket and the month's transactions">
 </picture>
 
 ## How it works
@@ -36,6 +36,9 @@ Leak is a desktop app for Windows, macOS and Linux. Sign in with Google, GitHub 
 to your account, so it survives a lost or broken computer.
 
 ## Features
+
+**A score for every month.** Once a month is over, Leak gives it a score from 0 to 100: half for how well you kept
+your budget split, half for how much of your income you kept.
 
 **The year at a glance.** Income vs expenses for every month, a month-by-month table with averages and totals, and a
 breakdown by category.

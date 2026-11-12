@@ -7,12 +7,18 @@ import { SSO_CALLBACK, ssoReturn } from './lib'
 export const desktop = '__TAURI_INTERNALS__' in window
 
 /**
- * Clerk's sign-in and account screens in the app's own look: its colour tokens (so light/dark follow along),
- * Geist, and the same radii and shadows as our sheets. Clerk's CSS goes in the components layer, so the
- * Tailwind classes below win.
+ * Clerk's sign-in and account screens in the app's own editorial look: ink on paper, square corners, rules instead of
+ * boxes, the serif for titles, uppercase tracked buttons, and the window's own canvas/panel split for the account
+ * screen's menu. Its colour tokens follow light/dark and Settings > Colours. Clerk's CSS goes in the components
+ * layer, so the Tailwind classes below win.
  */
+const label = 'text-[13px] font-medium tracking-[0.08em] uppercase'
+const quiet = 'text-zinc-600 hover:bg-ink/5 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
+const outline = 'h-10 border-0 bg-transparent shadow-none ring-1 ring-ink ring-inset transition hover:bg-ink/5 active:scale-[0.98]'
+
 export const appearance = {
   cssLayerName: 'components',
+  layout: { unsafe_disableDevelopmentModeWarnings: true },
   variables: {
     colorPrimary: 'var(--ui-accent)',
     colorPrimaryForeground: 'var(--ui-accent-fg)',
@@ -25,27 +31,51 @@ export const appearance = {
     colorInputForeground: 'var(--ui-fg)',
     colorBorder: 'var(--ui-line)',
     colorRing: 'var(--ui-accent)',
-    colorDanger: '#e11d48',
+    colorDanger: 'var(--ui-danger)',
     colorModalBackdrop: 'rgb(9 9 11 / 0.4)',
     fontFamily: "'Geist Variable', ui-sans-serif, system-ui, sans-serif",
-    borderRadius: '0.5rem',
+    borderRadius: '0',
   },
-  // Same classes as our own fields, buttons and sheets (ui.tsx), so the two read as one app.
+  // Same classes as our own sheets, palette, fields and buttons (index.css, ui.tsx), so the two read as one app.
   elements: {
     modalBackdrop: 'backdrop-blur-[2px]',
-    cardBox: 'rounded-2xl bg-[var(--card)] shadow-2xl shadow-zinc-950/20 ring-1 ring-zinc-200 dark:ring-zinc-800',
-    card: 'shadow-none',
-    headerTitle: 'text-lg font-semibold tracking-tight',
-    // Flat monochrome buttons, without Clerk's sheen.
+    // The command palette's box: an ink frame with a flat offset shadow.
+    cardBox: 'border-2 border-ink bg-panel shadow-[8px_8px_0] shadow-ink/10 dark:shadow-black/50',
+    card: 'bg-panel shadow-none',
+    modalCloseButton: `size-10 ${quiet}`,
+    headerTitle: 'font-display text-[1.75rem] leading-tight font-medium tracking-[-0.01em]',
+    headerSubtitle: 'text-sm text-zinc-600 dark:text-zinc-400',
+
+    // Account screen menu: the app's sidebar, canvas behind the panel, the current item marked with an ink rule.
+    navbar: 'border-r border-line bg-canvas bg-none shadow-none',
+    navbarButton: `h-9 text-sm font-medium transition ${quiet} [&.cl-active]:bg-ink/5 [&.cl-active]:text-zinc-900 [&.cl-active]:shadow-[inset_2px_0_0_var(--color-ink)] dark:[&.cl-active]:text-white`,
+    navbarMobileMenuRow: 'border-b border-line bg-canvas',
+
+    // Sections: small tracked labels on the left, hairline rules between them.
+    profileSection: 'border-line',
+    profileSectionTitleText: 'text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400',
+    profileSectionPrimaryButton: `${label} ${quiet}`,
+    // Delete account stays red so it stands out, like our danger buttons (`!`: it also carries the quiet grey above).
+    profileSectionPrimaryButton__danger: 'text-(--ui-danger)! ring-1 ring-(--ui-danger)/30 ring-inset hover:bg-(--ui-danger)/10!',
+    badge: 'bg-transparent text-[10px] font-medium tracking-[0.12em] text-zinc-600 uppercase shadow-none ring-1 ring-line ring-inset dark:text-zinc-400',
+    menuList: 'border-0 bg-panel shadow-[6px_6px_0] ring-1 shadow-ink/10 ring-ink dark:shadow-black/50',
+    menuItem: 'hover:bg-ink/5',
+    dividerLine: 'bg-line',
+
+    // Flat monochrome buttons, without Clerk's sheen; red on hover like ours.
     button: { '&[data-variant="solid"]::after': { display: 'none' } },
-    formButtonPrimary: 'h-10 text-sm font-medium shadow-none transition active:scale-[0.98]',
-    socialButtonsIconButton:
-      'h-10 border-0 bg-white shadow-none ring-1 ring-zinc-200 transition hover:bg-zinc-50 active:scale-[0.98] dark:bg-transparent dark:ring-zinc-700 dark:hover:bg-zinc-800',
-    socialButtonsBlockButton:
-      'h-10 border-0 bg-white shadow-none ring-1 ring-zinc-200 transition hover:bg-zinc-50 active:scale-[0.98] dark:bg-transparent dark:ring-zinc-700 dark:hover:bg-zinc-800',
+    formButtonPrimary: `h-10 ${label} shadow-none transition hover:bg-accent-strong active:scale-[0.98]`,
+    formButtonReset: `h-10 ${label} ${quiet}`,
+    socialButtonsIconButton: outline,
+    socialButtonsBlockButton: outline,
+    // Fields are an ink underline, shaded while focused (inputCls).
+    formFieldLabel: 'text-sm font-medium text-zinc-700 dark:text-zinc-300',
     formFieldInput:
-      'h-11 border-0 shadow-none ring-1 ring-zinc-300 transition focus:ring-2 focus:ring-[var(--ui-accent)] dark:ring-zinc-700',
-    footer: 'border-t border-zinc-100 bg-none bg-transparent dark:border-zinc-800',
+      'h-11 border-0 bg-transparent shadow-[inset_0_-1px_0_var(--color-ink)] transition focus:bg-ink/5 focus:shadow-[inset_0_-2px_0_var(--color-ink)]',
+    footer: 'border-t border-line bg-transparent bg-none',
+
+    // One email per account: Leak never mails, so a second address would only be one more way in to secure.
+    profileSectionPrimaryButton__emailAddresses: 'hidden',
     // Desktop signs in with Google/GitHub through the system browser from App's own buttons. Clerk's buttons for that,
     // and for connecting an account later, would run it in the webview, which Google refuses.
     ...(desktop && { socialButtonsRoot: 'hidden', dividerRow: 'hidden', profileSection__connectedAccounts: 'hidden' }),

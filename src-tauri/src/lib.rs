@@ -2,6 +2,12 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Wayland compositors take a window's icon from the .desktop file named after its app_id, which GTK sets from the
+    // program name, "leak". The rpm/deb packages install Leak.desktop (after productName), and the lookup is
+    // case-sensitive, so without this KDE shows its fallback icon. Has to run before GTK starts.
+    #[cfg(target_os = "linux")]
+    glib::set_prgname(Some("Leak"));
+
     tauri::Builder::default()
         // Has to come first. Windows and Linux open a leakbudget:// sign-in link by starting Leak again: this hands the
         // link to the running app (its deep-link plugin emits it there), brings that window up and ends the new process.

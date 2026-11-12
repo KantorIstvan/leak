@@ -27,3 +27,5 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # fails with anything newer. Drop this pin once the plugin builds against the latest rust-ini.
 [target.'cfg(target_os = "linux")'.dependencies]
 rust-ini = "=0.21.1"
+# Sets the Wayland app_id (see lib.rs). Same major version as the glib Tauri's GTK stack already pulls in.
+glib = "0.18"

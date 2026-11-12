@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { useClerk, useUser } from '@clerk/react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { CloudCheck, DownloadSimple, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
+import { CloudCheck, DownloadSimple, GithubLogo, Globe, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
 import { add, replaceAll, saveSettings, undoable, wipeAll } from '../cloud'
 import { decodeCsv, missing, readCsv, sameName, toCsv, type Row } from '../csv'
 import { BUCKETS, DATA_COLORS, db, exportBackup, rekey, type Backup, type Bucket, type DataColor, type Kind } from '../db'
@@ -65,8 +65,49 @@ export function SettingsPage() {
         <ShortcutsCard />
         <CsvCard />
         <DataCard />
+        <Credit />
       </div>
     </>
+  )
+}
+
+/** Who made the app. */
+function Credit() {
+  const { t } = useApp()
+  return (
+    <footer className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+      {t.madeBy}
+      <ExternalLink href="https://github.com/KantorIstvan">
+        <GithubLogo size={14} weight="bold" aria-hidden />
+        Kántor István
+      </ExternalLink>
+      <span aria-hidden>·</span>
+      <ExternalLink href="https://kantoristvan.hu">
+        <Globe size={14} weight="bold" aria-hidden />
+        kantoristvan.hu
+      </ExternalLink>
+    </footer>
+  )
+}
+
+/** A link out of the app. The desktop webview opens no new windows, so there it goes to the system browser. */
+function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  const open = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!desktop) return
+    e.preventDefault()
+    // Caught here: an unhandled rejection would surface as main.tsx's "Could not save" alert.
+    import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(href)).catch(console.error)
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      onClick={open}
+      className="inline-flex items-center gap-1 font-medium text-zinc-700 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-accent dark:text-zinc-300"
+    >
+      {children}
+    </a>
   )
 }
 

@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
@@ -179,7 +179,24 @@ const RAINBOW = 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #
 export function ColorPicker({ value, onChange, preview }: { value: string; onChange: (hex: string) => void; preview: ReactNode }) {
   const { t } = useApp()
   const custom = !SWATCHES.includes(value)
-  const [open, setOpen] = useState(custom)
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLFieldSetElement>(null)
+  // The custom picker floats over what follows; a press outside it or Escape closes it.
+  useEffect(() => {
+    if (!open) return
+    const away = (e: globalThis.PointerEvent) => !root.current?.contains(e.target as Node) && setOpen(false)
+    const esc = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault() // keep the surrounding dialog open
+      setOpen(false)
+    }
+    document.addEventListener('pointerdown', away, true)
+    document.addEventListener('keydown', esc, true)
+    return () => {
+      document.removeEventListener('pointerdown', away, true)
+      document.removeEventListener('keydown', esc, true)
+    }
+  }, [open])
   // HSV lives in state so the hue survives greys and black, where the hex alone cannot carry it.
   const [hsv, setHsv] = useState(() => hexToHsv(value) ?? [0, 0, 0])
   const [hex, setHex] = useState(value)
@@ -203,7 +220,7 @@ export function ColorPicker({ value, onChange, preview }: { value: string; onCha
   }
 
   return (
-    <fieldset className="grid gap-3">
+    <fieldset ref={root} className="relative grid gap-3">
       <legend className="mb-2 flex w-full items-center justify-between gap-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
         {t.color}
         {preview}
@@ -237,7 +254,7 @@ export function ColorPicker({ value, onChange, preview }: { value: string; onCha
       </div>
 
       {open && (
-        <div className="anim-pop grid gap-3 rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
+        <div className="anim-pop absolute inset-x-0 top-full z-30 mt-2 grid gap-3 rounded-xl bg-zinc-50 p-3 shadow-2xl ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-zinc-800">
           <div
             role="slider"
             tabIndex={0}

@@ -38,13 +38,18 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
           barGap={2}
           barCategoryGap="22%"
           onClick={(e) => e?.activeIndex != null && open.current(month(Number(e.activeIndex)))}
-          onMouseMove={(e) => setHoverMonth(e?.activeTooltipIndex != null ? Number(e.activeTooltipIndex) : null)}
+          // Off the plot (over the month labels or the amount axis) Recharts reports no month: keep the last one until
+          // the pointer leaves the chart, or the whole table would flash sharp while crossing those strips.
+          onMouseMove={(e) => e?.activeTooltipIndex != null && setHoverMonth(Number(e.activeTooltipIndex))}
           onMouseLeave={() => setHoverMonth(null)}
         >
           <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
           <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: 'var(--chart-ink)', fontSize: 12 }} interval="equidistantPreserveStart" />
           <YAxis tickLine={false} axisLine={false} width={64} tick={{ fill: 'var(--chart-ink)', fontSize: 12 }} tickFormatter={(v: number) => money(v * 100, true)} />
+          {/* No slide: on WebKitGTK (the Linux app) the tooltip's transform transition puts the faded table rows on GPU
+              layers, which draw them brighter and sharper until it ends, so they flashed when the pointer moved after a pause. */}
           <Tooltip
+            isAnimationActive={false}
             cursor={{ fill: 'var(--chart-grid)', opacity: 0.5, className: 'cursor-pointer' }}
             content={({ active, payload, label }) =>
               active && payload?.length ? (
