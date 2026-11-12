@@ -223,6 +223,16 @@ dialog.palette::backdrop {
       transform: scaleX(0);
     }
   }
+  /* Chart marks grow out of their baseline: up from the bottom, or down from the top. */
+  .anim-rise,
+  .anim-drop {
+    animation: rise 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes rise {
+    from {
+      transform: scaleY(0);
+    }
+  }
 }
 
 .num {

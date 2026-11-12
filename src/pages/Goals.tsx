@@ -4,7 +4,7 @@ import { Plus } from '@phosphor-icons/react'
 import { add, remove, update } from '../cloud'
 import { db, type Goal } from '../db'
 import { byMonth, parseAmount, summarize, toInput } from '../lib'
-import { Button, cardCls, ConfirmButton, Empty, Field, Form, inputCls, MoneyInput, PageHeader, Sheet, useApp } from '../ui'
+import { Button, cardCls, ConfirmButton, Empty, Field, Form, inputCls, MoneyInput, PageHeader, Sheet, useApp, usePhone } from '../ui'
 
 export function GoalsPage() {
   const { t, money } = useApp()
@@ -12,6 +12,7 @@ export function GoalsPage() {
   const goals = useLiveQuery(() => db.goals.toArray())
   const txs = useLiveQuery(() => db.txs.where('date').between(`${year}-01-01`, `${year}-12-31`, true, true).toArray())
   const [editing, setEditing] = useState<Goal | 'new' | null>(null)
+  const phone = usePhone()
 
   // Average monthly profit over months that have data this year.
   let avgProfit = 0
@@ -26,10 +27,10 @@ export function GoalsPage() {
       <PageHeader title={t.goalsTitle}>
         <Button variant="primary" onClick={() => setEditing('new')}>
           <Plus size={16} weight="bold" />
-          {t.newGoal}
+          <span className="max-[359px]:sr-only">{phone ? t.add : t.newGoal}</span>
         </Button>
       </PageHeader>
-      <p className="-mt-3 mb-6 max-w-[65ch] text-sm text-zinc-600 dark:text-zinc-400">{t.goalsHint}</p>
+      <p className="mb-6 max-w-[65ch] text-sm text-zinc-600 md:-mt-3 dark:text-zinc-400">{t.goalsHint}</p>
 
       {goals && !goals.length && <Empty title={t.emptyGoals} />}
 

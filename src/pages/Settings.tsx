@@ -6,7 +6,7 @@ import { add, replaceAll, saveSettings, undoable, wipeAll } from '../cloud'
 import { decodeCsv, missing, readCsv, sameName, toCsv, type Row } from '../csv'
 import { BUCKETS, DATA_COLORS, db, exportBackup, rekey, type Backup, type Bucket, type DataColor, type Kind } from '../db'
 import { monthOf, today } from '../lib'
-import { BUCKET_BG, Button, Card, ConfirmButton, CurrencySelect, PageHeader, Segmented, Select, Switch, useApp, useMonthlyIncome } from '../ui'
+import { BUCKET_BG, Button, Card, ConfirmButton, CurrencySelect, PageHeader, Segmented, Select, Switch, useApp, useCatChart, useMonthlyIncome } from '../ui'
 import { desktop } from '../clerk'
 import { ShortcutsCard } from '../Commands'
 import { ColorPicker, SWATCHES } from './Categories'
@@ -15,6 +15,7 @@ const update = saveSettings
 
 export function SettingsPage() {
   const { t, s } = useApp()
+  const [chart, setChart] = useCatChart()
 
   return (
     <>
@@ -54,6 +55,11 @@ export function SettingsPage() {
                 options={(['24', '12'] as const).map((v) => ({ value: v, label: t.clocks[v] }))}
               />
             </div>
+            <div className="grid gap-2">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t.catChart}</span>
+              <Segmented label={t.catChart} value={chart} onChange={setChart} options={(['donut', 'treemap'] as const).map((v) => ({ value: v, label: t.catCharts[v] }))} />
+              <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.catChartHint}</span>
+            </div>
             <div className="max-w-sm">
               <CurrencySelect label={t.currency} hint={t.currencyHint} value={s.currency} onChange={(currency) => update({ currency })} />
             </div>
@@ -62,7 +68,10 @@ export function SettingsPage() {
 
         <ColorsCard />
         <Ratios />
-        <ShortcutsCard />
+        {/* Keyboard shortcuts are for a keyboard: not on phones. */}
+        <div className="max-md:hidden">
+          <ShortcutsCard />
+        </div>
         <CsvCard />
         <DataCard />
         <Credit />

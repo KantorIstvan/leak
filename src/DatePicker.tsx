@@ -45,7 +45,7 @@ export function DatePicker({
     <div ref={ref} className="relative grid gap-2" onKeyDown={onKeyDown}>
       <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1">
+        <div className={`relative min-w-0 flex-1 ${quick ? 'max-sm:basis-full' : ''}`}>
           <button
             type="button"
             aria-expanded={open}

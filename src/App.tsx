@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ClerkFailed, SignInButton, useAuth } from '@clerk/react'
-import { ArrowsClockwise, CalendarBlank, ChartBar, CloudSlash, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { ArrowsClockwise, CalendarBlank, CaretRight, ChartBar, CloudSlash, DotsThree, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { desktop, finishSso, startSso } from './clerk'
 import { Commands } from './Commands'
@@ -28,6 +28,29 @@ const NAV: { id: Page; icon: Icon }[] = [
   { id: 'categories', icon: Tag },
   { id: 'settings', icon: GearSix },
 ]
+
+// Phones: a tab bar holds five things at most, so three pages and the add button get a slot and the rest sit behind More.
+const TABS: Page[] = ['month', 'year', 'subs']
+const MORE: Page[] = ['goals', 'categories', 'settings']
+const icon = (id: Page) => NAV.find((n) => n.id === id)!.icon
+
+/** One slot of the phone tab bar: 56px tall, a rule on top of the current one. */
+function Tab({ icon: I, label, on, onClick, shot }: { icon: Icon; label: string; on: boolean; onClick: () => void; shot?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={on ? 'page' : undefined}
+      data-shot={shot}
+      className={`flex h-14 min-w-0 flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
+        on ? 'text-zinc-900 shadow-[inset_0_2px_0_var(--color-ink)] dark:text-white' : 'text-zinc-500 dark:text-zinc-400'
+      }`}
+    >
+      <I size={22} weight={on ? 'fill' : 'regular'} />
+      <span className="max-w-full truncate px-1">{label}</span>
+    </button>
+  )
+}
 
 const readPage = (): Page => {
   const h = location.hash.slice(1) as Page
@@ -259,6 +282,7 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const [editing, setEditing] = useState<Tx | 'new' | null>(null)
   const [collapsed, toggleSidebar] = useCollapsed()
   const [palette, setPalette] = useState(false)
+  const [more, setMore] = useState(false)
   useTheme(settings?.theme)
   // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open past
   // a charge day (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
@@ -349,11 +373,11 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
 
         {/* relative: absolutely placed descendants (sr-only file inputs, popovers) belong to this scroller. Without it
             they hang off the window and stretch it, so the window scrolls past the app into nothing. */}
-        <main className="relative px-4 pt-6 pb-32 sm:px-6 md:my-2 md:mr-2 md:overflow-y-auto md:bg-panel md:px-10 md:pt-10 md:pb-16 md:ring-1 md:ring-line">
+        <main className="relative px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:my-2 md:mr-2 md:overflow-y-auto md:bg-panel md:px-10 md:pt-10 md:pb-16 md:ring-1 md:ring-line">
           {(failed || clerkDown) && (
             <div
               role="status"
-              className="anim-fade mx-auto mb-6 flex max-w-6xl items-center gap-3 rounded-xl bg-zinc-100 py-2 pr-2 pl-4 text-sm text-zinc-700 dark:bg-zinc-800/70 dark:text-zinc-300"
+              className="anim-fade mx-auto mb-6 flex max-w-6xl items-center gap-3 rounded-xl bg-zinc-100 py-2 pr-2 pl-4 text-sm text-zinc-700 max-md:mt-3 max-md:mb-0 dark:bg-zinc-800/70 dark:text-zinc-300"
             >
               <CloudSlash size={18} className="shrink-0" aria-hidden />
               <span className="flex-1">{t.offline}</span>
@@ -373,31 +397,43 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
         </main>
       </div>
 
-      {/* Mobile: floating add button + bottom tab bar */}
-      <button
-        type="button"
-        onClick={add}
-        aria-label={t.addTx}
-        className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] grid size-14 place-items-center bg-accent text-accent-fg shadow-[4px_4px_0_rgb(0_0_0/0.15)] transition active:scale-95 md:hidden"
-      >
-        <Plus size={24} weight="bold" />
-      </button>
-      <nav className="fixed inset-x-0 bottom-0 grid grid-cols-6 border-t border-ink bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
-        {NAV.map(({ id, icon: I }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => go(id)}
-            aria-current={page === id ? 'page' : undefined}
-            className={`flex h-16 flex-col items-center justify-center gap-1 text-[11px] font-medium ${
-              page === id ? 'text-accent' : 'text-zinc-500 dark:text-zinc-400'
-            }`}
-          >
-            <I size={22} weight={page === id ? 'fill' : 'regular'} />
-            <span className="max-w-full truncate px-1">{t.nav[id]}</span>
-          </button>
+      {/* Phones: the tab bar. Three pages, the add button in the middle where the thumb rests, and More for the rest. */}
+      <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-ink bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
+        {TABS.slice(0, 2).map((id) => (
+          <Tab key={id} icon={icon(id)} label={t.nav[id]} on={page === id} onClick={() => go(id)} />
         ))}
+        <button type="button" onClick={add} aria-label={t.addTx} data-shot="add" className="group grid h-14 place-items-center focus-visible:outline-none">
+          <span className="grid size-11 place-items-center bg-accent text-accent-fg transition group-active:scale-95 group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-accent">
+            <Plus size={22} weight="bold" />
+          </span>
+        </button>
+        <Tab icon={icon('subs')} label={t.navShort.subs} on={page === 'subs'} onClick={() => go('subs')} />
+        <Tab icon={DotsThree} label={t.more} on={MORE.includes(page)} onClick={() => setMore(true)} shot="more" />
       </nav>
+      <Sheet open={more} onClose={() => setMore(false)} title={t.more}>
+        <ul className="-mx-4 border-t border-line">
+          {[
+            ...MORE.map((id) => ({ id: id as string, icon: icon(id), label: t.nav[id], on: page === id, run: () => go(id) })),
+            { id: 'search', icon: MagnifyingGlass, label: t.paletteHint, on: false, run: () => setPalette(true) },
+          ].map(({ id, icon: I, label, on, run }) => (
+            <li key={id} className="border-b border-line last:border-0">
+              <button
+                type="button"
+                aria-current={on ? 'page' : undefined}
+                onClick={() => {
+                  setMore(false)
+                  run()
+                }}
+                className={`flex h-14 w-full items-center gap-4 px-4 text-left text-base transition-colors active:bg-ink/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${on ? 'font-semibold' : ''}`}
+              >
+                <I size={22} weight={on ? 'fill' : 'regular'} className="shrink-0" />
+                <span className="flex-1 truncate">{label}</span>
+                <CaretRight size={16} className="shrink-0 text-zinc-500" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Sheet>
 
       <Sheet open={editing !== null} onClose={() => setEditing(null)} title={editing === 'new' ? t.addTx : t.editTx}>
         {editing && <TxForm tx={editing === 'new' ? undefined : editing} defaultDate={defaultDate} onDone={() => setEditing(null)} />}

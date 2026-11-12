@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { CalendarBlank, CaretDown, CaretLeft, CaretRight, CaretUpDown, Check, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { db, type Bucket, type Category, type Kind, type Settings } from './db'
 import type { Dict } from './i18n'
 import { ICONS } from './icons'
+import { Treemap } from './charts'
 import { avgMonthlyIncome, currencySymbol, groupAmount, monthOf, shiftMonth, tint, today, type Tier } from './lib'
 
 // Shape rules: square corners everywhere (index.css zeroes the radius scale); rounded-full only for dots and switches.
@@ -21,6 +22,52 @@ export interface AppCtx {
 
 export const Ctx = createContext<AppCtx>(null!)
 export const useApp = () => useContext(Ctx)
+
+// --- Phone layout ---------------------------------------------------------
+
+// Below Tailwind's md the app is a phone app: a top bar, one column, a tab bar. The same line the md: classes draw.
+const phoneQuery = typeof matchMedia === 'undefined' ? null : matchMedia('(max-width: 767.98px)')
+const onPhoneChange = (cb: () => void) => {
+  phoneQuery?.addEventListener('change', cb)
+  return () => phoneQuery?.removeEventListener('change', cb)
+}
+/** True on a phone-width window; for the parts that swap a component, not just its classes. */
+export const usePhone = () => useSyncExternalStore(onPhoneChange, () => !!phoneQuery?.matches)
+
+export type CatChart = 'donut' | 'treemap'
+const CHART_KEY = 'leak-catchart'
+const chartListeners = new Set<() => void>()
+let chartPicked: CatChart | null = null // the choice when storage is blocked: kept for this session only
+const readChart = (): CatChart | null => {
+  try {
+    const v = localStorage.getItem(CHART_KEY)
+    return v === 'donut' || v === 'treemap' ? v : chartPicked
+  } catch {
+    return chartPicked
+  }
+}
+const onChartChange = (cb: () => void) => {
+  chartListeners.add(cb)
+  return () => void chartListeners.delete(cb)
+}
+/**
+ * How category shares are drawn: a donut or a treemap. Remembered on this device (like the sidebar), since a phone
+ * and a desktop may well want different ones; until picked, a phone shows the treemap and a wider window the donut.
+ */
+export function useCatChart() {
+  const phone = usePhone()
+  const picked = useSyncExternalStore(onChartChange, readChart)
+  const set = (v: CatChart) => {
+    chartPicked = v
+    try {
+      localStorage.setItem(CHART_KEY, v)
+    } catch {
+      // storage blocked: this session only
+    }
+    chartListeners.forEach((cb) => cb())
+  }
+  return [picked ?? (phone ? 'treemap' : 'donut'), set] as const
+}
 
 export const BUCKET_BG: Record<Bucket, string> = { needs: 'bg-needs', wants: 'bg-wants', investments: 'bg-investments' }
 /** Score tier colours (monthScore); always next to the number or tier name, so colour is never the only cue. */
@@ -73,7 +120,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`inline-flex h-10 items-center justify-center gap-2 px-4 text-[13px] font-medium tracking-[0.08em] whitespace-nowrap uppercase transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${VARIANTS[variant]} ${className}`}
+      className={`inline-flex h-11 items-center justify-center gap-2 px-4 text-[13px] md:h-10 font-medium tracking-[0.08em] whitespace-nowrap uppercase transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${VARIANTS[variant]} ${className}`}
       disabled={disabled || busy}
       aria-busy={busy || undefined}
       onClick={(e) => run(() => onClick?.(e))}
@@ -107,7 +154,7 @@ export function IconButton({ label, children, ...p }: ButtonHTMLAttributes<HTMLB
       type="button"
       aria-label={label}
       data-tip={label}
-      className="grid size-10 place-items-center text-zinc-600 transition hover:bg-ink/5 hover:text-zinc-900 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent dark:text-zinc-400 dark:hover:text-zinc-100"
+      className="grid size-11 shrink-0 place-items-center text-zinc-600 transition hover:bg-ink/5 md:size-10 hover:text-zinc-900 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent dark:text-zinc-400 dark:hover:text-zinc-100"
       {...p}
     >
       {children}
@@ -507,7 +554,7 @@ export function Segmented<T extends string>({
           role="radio"
           aria-checked={o.value === value}
           onClick={() => onChange(o.value)}
-          className={`h-8 px-3 text-sm font-medium whitespace-nowrap transition focus-visible:outline-2 focus-visible:outline-accent ${
+          className={`h-9 px-3 text-sm font-medium whitespace-nowrap transition focus-visible:outline-2 focus-visible:outline-accent md:h-8 ${
             o.value === value ? 'bg-accent text-accent-fg' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'
           }`}
         >
@@ -526,7 +573,7 @@ export function Card({ title, hint, action, children, className = '' }: { title?
     <section className={`${cardCls} min-w-0 pt-4 pb-6 ${className}`}>
       {(title || action) && (
         <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 max-md:flex-auto">
             {title && <h2 className="font-display text-[1.375rem] leading-tight font-medium tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">{title}</h2>}
             {hint && <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{hint}</p>}
           </div>
@@ -545,20 +592,24 @@ export function Stat({ label, value, sub, tone, className = '' }: { label: strin
         {tone && <span className={`size-2 ${tone}`} aria-hidden />}
         {label}
       </div>
-      <div className="num mt-2 truncate font-display text-[1.75rem] leading-tight tracking-[-0.02em] sm:text-4xl">{value}</div>
+      {/* Two tiles share a phone's width: a long amount steps down a size instead of being cut. */}
+      <div className={`num mt-2 truncate font-display leading-tight tracking-[-0.02em] sm:text-4xl ${value.length > 12 ? 'text-xl' : value.length > 9 ? 'text-2xl' : 'text-[1.75rem]'}`}>{value}</div>
       {sub && <div className="num mt-1 text-[13px] text-zinc-500 dark:text-zinc-400">{sub}</div>}
     </div>
   )
 }
 
-const h1Cls = 'font-display text-4xl leading-[1.05] tracking-[-0.03em] first-letter:uppercase md:text-5xl'
+const h1Cls = 'min-w-0 font-display text-[1.5rem] leading-[1.05] tracking-[-0.02em] first-letter:uppercase md:text-5xl md:tracking-[-0.03em]'
 
-/** Page title and actions. A non-string title (e.g. a PeriodPicker) brings its own heading. */
+/**
+ * Page title and actions. A non-string title (e.g. a PeriodPicker) brings its own heading.
+ * On phones it is the top bar: one 56px row across the screen that stays put while the page scrolls under it.
+ */
 export function PageHeader({ title, children }: { title: ReactNode; children?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      {typeof title === 'string' ? <h1 className={h1Cls}>{title}</h1> : title}
-      {children && <div className="flex items-center gap-2">{children}</div>}
+    <div className="sticky top-0 z-10 -mx-4 mb-5 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between gap-2 border-b border-line bg-panel/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md md:static md:mx-0 md:mb-6 md:h-auto md:flex-wrap md:gap-3 md:border-0 md:bg-transparent md:p-0 md:backdrop-blur-none">
+      {typeof title === 'string' ? <h1 className={`${h1Cls} truncate`}>{title}</h1> : title}
+      {children && <div className="flex shrink-0 items-center gap-1 md:gap-2">{children}</div>}
     </div>
   )
 }
@@ -580,8 +631,9 @@ export function PeriodPicker({ title, value, onChange }: { title: string; value:
     months ? { v: `${page}-${String(i + 1).padStart(2, '0')}`, label: short.format(new Date(page, i, 1)) } : { v: String(page + i), label: String(page + i) },
   )
   return (
-    <div ref={p.ref} className="relative" onKeyDown={p.onKeyDown}>
-      <h1 className={h1Cls}>
+    <div ref={p.ref} className="relative min-w-0" onKeyDown={p.onKeyDown}>
+      {/* flex: the button's negative margins then widen it instead of cutting its text short */}
+      <h1 className={`${h1Cls} flex`}>
         <button
           type="button"
           aria-expanded={p.open}
@@ -589,10 +641,10 @@ export function PeriodPicker({ title, value, onChange }: { title: string; value:
             setPage(first)
             p.setOpen(!p.open)
           }}
-          className="-mx-2 flex items-center gap-2 rounded-lg px-2 transition hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-accent dark:hover:bg-zinc-800/60"
+          className="-mx-2 flex min-w-0 items-center gap-2 rounded-lg px-2 transition hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-accent max-md:h-11 dark:hover:bg-zinc-800/60"
         >
-          {title}
-          <CaretDown size={18} weight="bold" className={`text-zinc-500 transition-transform ${p.open ? 'rotate-180' : ''}`} />
+          <span className="truncate first-letter:uppercase">{title}</span>
+          <CaretDown size={18} weight="bold" className={`shrink-0 text-zinc-500 transition-transform ${p.open ? 'rotate-180' : ''}`} />
         </button>
       </h1>
       {p.open && (
@@ -635,7 +687,8 @@ export function PeriodPicker({ title, value, onChange }: { title: string; value:
 export function PeriodNav({ onPrev, onNext, onToday }: { onPrev: () => void; onNext: () => void; onToday?: () => void }) {
   const { t } = useApp()
   return (
-    <div className="flex divide-x divide-ink/25 ring-1 ring-ink ring-inset">
+    // Phones: two bare arrows, and "Today" only while away from it, as a small chip before them.
+    <div className="flex items-center md:divide-x md:divide-ink/25 md:ring-1 md:ring-ink md:ring-inset">
       <IconButton label={t.prev} onClick={onPrev}>
         <CaretLeft size={18} weight="bold" />
       </IconButton>
@@ -643,7 +696,7 @@ export function PeriodNav({ onPrev, onNext, onToday }: { onPrev: () => void; onN
         type="button"
         disabled={!onToday}
         onClick={onToday}
-        className="h-10 min-w-14 px-3 text-sm font-semibold text-zinc-900 transition hover:bg-ink/5 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:font-medium disabled:text-zinc-500 dark:text-zinc-100 dark:disabled:text-zinc-500"
+        className="h-10 min-w-14 px-3 text-sm font-semibold text-zinc-900 transition hover:bg-ink/5 active:scale-95 focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:font-medium disabled:text-zinc-500 max-md:-order-1 max-md:mr-1 max-md:h-8 max-md:min-w-0 max-md:px-2.5 max-md:text-xs max-md:ring-1 max-md:ring-ink/40 max-md:ring-inset max-md:disabled:hidden dark:text-zinc-100 dark:disabled:text-zinc-500"
       >
         {t.today}
       </button>
@@ -694,13 +747,14 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
       {/* The body is the only scroller: it shrinks to what the dialog's max-height leaves after the header and border. */}
       {open && (
         <>
-          <header className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5 pb-4 sm:px-6 sm:pt-6">
+          <span className="mx-auto mt-2 h-1 w-9 shrink-0 bg-ink/25 sm:hidden" aria-hidden />
+          <header className="flex shrink-0 items-center justify-between gap-3 px-4 pt-2 pb-3 sm:px-6 sm:pt-6 sm:pb-4">
             <h2 className="font-display text-2xl leading-tight tracking-[-0.01em]">{title}</h2>
             <IconButton label={t.cancel} onClick={onClose}>
               <X size={18} />
             </IconButton>
           </header>
-          <div className="min-h-0 overflow-y-auto px-5 pt-1 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-6">{children}</div>
+          <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-6">{children}</div>
         </>
       )}
     </dialog>
@@ -894,8 +948,18 @@ export function CategoryBars({
   const total = rows.reduce((n, r) => n + r.amount, 0)
   const pct = new Intl.NumberFormat(t.locale, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 })
   const data = useMemo(() => rows.map((r) => ({ ...r, name: cat.get(r.id)?.name ?? '?', color: cat.get(r.id)?.color ?? '#a1a1aa' })), [rows, cat])
+  const [chart] = useCatChart()
   return (
     <div className="grid gap-6">
+      {chart === 'treemap' ? (
+        <div className="grid gap-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">{t.sum}</span>
+            <span className="num font-display text-2xl leading-none tracking-[-0.02em]">{money(total)}</span>
+          </div>
+          <Treemap rows={rows} active={hover} onActive={setHover} />
+        </div>
+      ) : (
       <Donut
         data={data}
         active={hover}
@@ -915,6 +979,7 @@ export function CategoryBars({
         <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.sum}</span>
         <span className="num font-display tracking-[-0.02em] text-2xl leading-tight">{money(total, true)}</span>
       </Donut>
+      )}
       <ul className="grid gap-3">
         {(all ? rows : rows.slice(0, LIST_MAX)).map((r, i) => {
           const c = cat.get(r.id)

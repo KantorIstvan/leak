@@ -314,6 +314,22 @@ const en = {
   recapPoints: (n: number, p: string) => `score ${n}, kept ${p} of income`,
   recapVsLast: (year: number) => `Spending vs ${year}`,
   recapTag: 'Biggest tag',
+  // Phone layout and its charts
+  catChart: 'Category chart',
+  catCharts: { donut: 'Donut', treemap: 'Treemap' },
+  catChartHint: 'How category shares are drawn on the Month and Year pages. Remembered on this device only.',
+  more: 'More',
+  navShort: { subs: 'Subs' },
+  search: 'Search',
+  otherCats: 'Other',
+  pace: 'Spending pace',
+  paceLess: (x: string) => `${x} less than the month before`,
+  paceMore: (x: string) => `${x} more than the month before`,
+  openMonth: (m: string) => `Open ${m}`,
+  chargeDays: 'Charge days',
+  subsAhead: (x: string) => `${x} still to come this month`,
+  subsDone: 'Everything is charged for this month',
+  shareOfSpend: 'Share of spending against its target',
 }
 
 export type Dict = typeof en
@@ -629,6 +645,21 @@ const hu: Dict = {
   recapPoints: (n, p) => `${n} pont, a bevétel ${p}-a megmaradt`,
   recapVsLast: () => 'Kiadás az előző évhez képest',
   recapTag: 'A legnagyobb címke',
+  catChart: 'Kategóriadiagram',
+  catCharts: { donut: 'Kördiagram', treemap: 'Fatérkép' },
+  catChartHint: 'Így jelennek meg a kategóriák arányai a Hónap és az Év oldalon. Csak ezen az eszközön jegyzi meg.',
+  more: 'Több',
+  navShort: { subs: 'Előfiz.' },
+  search: 'Keresés',
+  otherCats: 'Egyéb',
+  pace: 'Költés üteme',
+  paceLess: (x) => `${x} kevesebb, mint egy hónappal korábban`,
+  paceMore: (x) => `${x} több, mint egy hónappal korábban`,
+  openMonth: (m) => `${m} megnyitása`,
+  chargeDays: 'Terhelési napok',
+  subsAhead: (x) => `Ebben a hónapban még ${x} várható`,
+  subsDone: 'Ebben a hónapban már minden levonva',
+  shareOfSpend: 'A költés aránya a célhoz képest',
 }
 
 export const dicts = { en, hu }

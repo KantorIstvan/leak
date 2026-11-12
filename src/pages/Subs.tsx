@@ -6,7 +6,9 @@ import { BUCKETS, db, type Bucket, type Category, type Sub } from '../db'
 import { convert, rate } from '../fx'
 import { formatMoney, monthOf, parseAmount, reviewDue, shiftMonth, today, toInput } from '../lib'
 import { CategoryPicker } from './Categories'
-import { Button, Card, cardCls, CatIcon, ConfirmButton, CurrencySelect, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp } from '../ui'
+import { ICONS } from '../icons'
+import { Button, Card, cardCls, CatIcon, ConfirmButton, CurrencySelect, Donut, Empty, DayOfMonthPicker, fade, Field, Form, inputCls, MoneyInput, PageHeader, Roll, Segmented, Sheet, useApp, useCatChart, usePhone } from '../ui'
+import { ChargeDays, Treemap } from '../charts'
 
 /** Today's rate into `base` for each of `codes`; one that is loading or unavailable is missing. */
 function useRates(codes: string[], base: string) {
@@ -31,6 +33,8 @@ export function SubsPage() {
   const [slice, setSlice] = useState<string | null>(null)
   const [row, setRow] = useState<string | null>(null)
   const hover = slice ?? row
+  const phone = usePhone()
+  const [chart] = useCatChart()
   const foreign = (subs ?? []).filter((s) => s.currency && s.currency !== settings.currency)
   const rates = useRates(
     foreign.map((s) => s.currency!),
@@ -65,10 +69,10 @@ export function SubsPage() {
       <PageHeader title={t.subsTitle}>
         <Button variant="primary" onClick={() => setEditing('new')}>
           <Plus size={16} weight="bold" />
-          {t.newSub}
+          <span className="max-[359px]:sr-only">{phone ? t.add : t.newSub}</span>
         </Button>
       </PageHeader>
-      <p className="-mt-3 mb-6 max-w-[65ch] text-sm text-zinc-600 dark:text-zinc-400">{t.subsHint}</p>
+      <p className="mb-6 max-w-[65ch] text-sm text-zinc-600 md:-mt-3 dark:text-zinc-400">{t.subsHint}</p>
 
       {subs && !subs.length && <Empty title={t.emptySubs} />}
 
@@ -100,14 +104,32 @@ export function SubsPage() {
                 <span className="size-2 bg-expense" aria-hidden />
                 {t.perMonth}
               </div>
-              <div className="num mt-2 truncate font-display tracking-[-0.02em] text-[1.75rem] leading-tight sm:text-4xl">{money(total)}</div>
-              <div className="num mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">{t.perYear(money(total * 12))}</div>
+              <div className="num mt-2 truncate font-display text-[2.75rem] leading-none tracking-[-0.03em] md:text-4xl md:leading-tight md:tracking-[-0.02em]">{money(total)}</div>
+              <div className="num mt-2 text-sm text-zinc-600 md:mt-0.5 dark:text-zinc-400">{t.perYear(money(total * 12))}</div>
               {foreign.length > 0 && <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{t.atTodaysRate}</div>}
             </div>
+            {phone ? (
+              <div className="border-t border-line pt-4">
+                <h2 className="mb-3 text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">{t.chargeDays}</h2>
+                <ChargeDays charges={subs.map((s) => ({ id: s.id, name: s.name, day: s.day, amount: inBase(s), color: cat.get(s.categoryId)?.color ?? '#a1a1aa' }))} active={slice} onActive={setSlice} />
+              </div>
+            ) : chart === 'treemap' ? (
+              <Treemap
+                rows={slices.map((x) => ({ id: x.id, amount: x.amount, share: total ? x.amount / total : 0 }))}
+                active={slice}
+                onActive={setSlice}
+                info={(id) => {
+                  const sub = subs.find((x) => x.id === id)
+                  const c = sub && cat.get(sub.categoryId)
+                  return sub && { name: sub.name, color: c?.color ?? '#a1a1aa', icon: c?.icon ? ICONS[c.icon] : undefined }
+                }}
+              />
+            ) : (
             <Donut data={slices} active={slice} onActive={setSlice}>
               <Roll text={hovered?.name ?? t.perYearLabel} className="max-w-32 justify-items-center text-xs text-zinc-600 dark:text-zinc-400" />
               <Roll text={money((hovered ? inBase(hovered) : total) * 12, true)} className="num justify-items-center font-display tracking-[-0.02em] text-2xl leading-tight" />
             </Donut>
+            )}
           </section>
           <ul className={`${cardCls} grid content-start pt-1 lg:col-span-2`}>
             {[...subs]

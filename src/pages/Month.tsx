@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ArrowsClockwise, CheckCircle, Drop, Equals, Fire, Plus, Receipt, Target, TrendDown, TrendUp, Trophy, XCircle } from '@phosphor-icons/react'
 import { db, type Kind, type Tx } from '../db'
 import { insights, monthOf, monthScore, plan, ranked, ratiosFor, shiftMonth, summarize, today, type Summary } from '../lib'
 import { chargeId } from '../cloud'
-import { BUCKET_BG, Button, TIER_TEXT, Card, CatIcon, CategoryBars, PageHeader, PeriodNav, PeriodPicker, Segmented, Stat, useApp } from '../ui'
+import { BUCKET_BG, Button, TIER_TEXT, Card, CatIcon, CategoryBars, PageHeader, PeriodNav, PeriodPicker, Segmented, Stat, useApp, usePhone } from '../ui'
+import { SpendPace, Vessels } from '../charts'
 import { TxBrowser } from '../TxBrowser'
 
 export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; setMonth: (m: string) => void; onAdd: () => void; onEdit: (tx: Tx) => void }) {
@@ -14,6 +15,7 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
   const [hover, setHover] = useState<string | null>(null)
   const sum = useMemo(() => txs && summarize(txs), [txs])
   const [pick, setPick] = useState<Kind>('expense')
+  const phone = usePhone()
   // Falls back to whichever side has money; the switch only shows when both do.
   const kind = !sum?.income ? 'expense' : !sum.expense ? 'income' : pick
   // Memoized so a hover re-render hands the donut the same data and does not restart its animation.
@@ -57,6 +59,29 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
     <>
       {header}
 
+      {phone ? (
+        // Phones lead with the one number the month is about, then the two it comes from on a single line.
+        <section>
+          <div className="text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">{t.remaining}</div>
+          <div className={`num mt-1.5 truncate font-display text-[2.75rem] leading-none tracking-[-0.03em] ${remaining < 0 ? 'text-expense' : ''}`}>{money(remaining)}</div>
+          {sum.income > 0 && <div className="num mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t.ofIncome(pct(remaining))}</div>}
+          <dl className="mt-5 grid grid-cols-2 divide-x divide-line border-y border-line">
+            {[
+              { label: t.income, value: money(sum.income), tone: 'bg-income', sub: '' },
+              { label: t.expenses, value: money(sum.expense), tone: 'bg-expense', sub: sum.income ? pct(sum.expense) : '' },
+            ].map((f, i) => (
+              <div key={f.label} className={`min-w-0 py-3 ${i ? 'pl-4' : 'pr-4'}`}>
+                <dt className="flex items-center gap-2 text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">
+                  <span className={`size-2 shrink-0 ${f.tone}`} aria-hidden />
+                  <span className="truncate">{f.label}</span>
+                  {f.sub && <span className="num ml-auto tracking-normal">{f.sub}</span>}
+                </dt>
+                <dd className={`num mt-1.5 truncate font-display leading-tight tracking-[-0.02em] ${f.value.length > 11 ? 'text-lg' : 'text-[1.375rem]'}`}>{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : (
       <div className="grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-3 lg:gap-x-10">
         <Stat
           className="col-span-2 lg:col-span-1"
@@ -67,13 +92,24 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
         <Stat label={t.income} value={money(sum.income)} tone="bg-income" />
         <Stat label={t.expenses} value={money(sum.expense)} sub={sum.income ? t.ofIncome(pct(sum.expense)) : undefined} tone="bg-expense" />
       </div>
+      )}
 
       {/* The transactions span all rows; the 1fr row takes their extra height, so the cards above keep their own. */}
-      <div className={`mt-8 grid gap-x-10 gap-y-8 lg:grid-cols-5 ${limits.length ? 'lg:grid-rows-[auto_auto_auto_1fr]' : 'lg:grid-rows-[auto_auto_1fr]'}`}>
+      <div className="mt-8 grid gap-x-10 gap-y-8 lg:grid-cols-5 lg:grid-rows-[repeat(var(--rows),auto)_1fr]" style={{ '--rows': 2 + Number(limits.length > 0) + Number(sum.expense > 0) } as CSSProperties}>
+        {sum.expense > 0 && (
+          <Card title={t.pace} className="-order-2 lg:col-span-2">
+            <SpendPace month={month} txs={txs} />
+          </Card>
+        )}
+
         <ScoreCard month={month} txs={txs} sum={sum} />
 
-        <Card title={t.plan} hint={t.planHint} className="lg:col-span-2">
-          {sum.income ? (
+        <Card title={t.plan} hint={t.planHint} className="max-lg:-order-1 lg:col-span-2">
+          {!sum.income ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.noIncome}</p>
+          ) : phone ? (
+            <Vessels plans={plan(sum, ratios)} />
+          ) : (
             <ul className="grid gap-5">
               {plan(sum, ratios).map((b) => {
                 const fill = b.goal ? Math.min(100, (b.actual / b.goal) * 100) : 100
@@ -103,8 +139,6 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
                 )
               })}
             </ul>
-          ) : (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.noIncome}</p>
           )}
         </Card>
 
@@ -134,7 +168,7 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
           </Card>
         )}
 
-        <Card title={t.transactions} className={`lg:col-span-3 lg:row-start-1 lg:col-start-3 ${limits.length ? 'lg:row-span-4' : 'lg:row-span-3'}`}>
+        <Card title={t.transactions} className="max-lg:order-last lg:col-span-3 lg:col-start-3 lg:[grid-row:1/-1]">
           <TxBrowser key={month} txs={txs} month={month} onAdd={onAdd} onEdit={onEdit} highlight={hover} />
         </Card>
 
@@ -235,8 +269,8 @@ function ScoreCard({ month, txs, sum }: { month: string; txs: Tx[]; sum: Summary
           })}
         </ul>
       )}
-      <details className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
-        <summary className="cursor-pointer font-medium text-zinc-700 dark:text-zinc-300">{t.scoreHow}</summary>
+      <details className="mt-4 text-sm text-zinc-600 max-md:mt-1 dark:text-zinc-400">
+        <summary className="cursor-pointer font-medium text-zinc-700 max-md:py-3 dark:text-zinc-300">{t.scoreHow}</summary>
         <div className="mt-2 grid gap-2">
           {t.scoreMethod.map((p) => (
             <p key={p}>{p}</p>

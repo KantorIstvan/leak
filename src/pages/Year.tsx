@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { BUCKETS, db, type Tx } from '../db'
+import { BUCKETS, db, type Bucket, type Tx } from '../db'
 import { byMonth, monthOf, monthScore, ranked, ratiosFor, summarize, today, yearRecap, type Summary } from '../lib'
-import { BUCKET_BG, TIER_TEXT, Card, CategoryBars, CatIcon, Donut, Empty, fade, PageHeader, PeriodNav, PeriodPicker, Stat, useApp } from '../ui'
+import { BUCKET_BG, TIER_TEXT, Card, CategoryBars, CatIcon, Donut, Empty, fade, PageHeader, PeriodNav, PeriodPicker, Stat, useApp, useCatChart, usePhone } from '../ui'
+import { TargetBars, Treemap, YearBars } from '../charts'
 
 export function YearPage({ year, setYear, openMonth }: { year: number; setYear: (y: number) => void; openMonth: (m: string) => void }) {
   const { t, s, money, cats } = useApp()
@@ -16,6 +17,7 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
   }, [year])
   // The month hovered in the bar chart: the months table keeps its row sharp and fades the rest.
   const [hoverMonth, setHoverMonth] = useState<number | null>(null)
+  const phone = usePhone()
   const open = useRef(openMonth)
   useEffect(() => {
     open.current = openMonth
@@ -117,6 +119,13 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
 
       {(year < thisYear() || today().slice(5, 7) === '12') && <Recap txs={txs} year={year} scores={scores} prevExpense={prevExpense ?? 0} />}
 
+      {/* Phones: one chart you touch stands in for the bar chart and the wide months table. */}
+      {phone ? (
+        <Card title={t.trend} className="mt-8">
+          <YearBars key={year} year={year} months={months} scores={scores} openMonth={openMonth} />
+        </Card>
+      ) : (
+      <>
       <Card
         title={t.trend}
         className="mt-8"
@@ -179,11 +188,13 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
           </table>
         </div>
       </Card>
+      </>
+      )}
 
       <div className="mt-8 grid gap-x-10 gap-y-8 lg:grid-cols-2 xl:grid-cols-3">
         {total.expense > 0 && (
           <Card title={t.ratios}>
-            <BucketSplit s={total} />
+            {phone ? <TargetBars s={total} ratios={s.ratios} /> : <BucketSplit s={total} />}
           </Card>
         )}
         {total.expense > 0 && (
@@ -256,6 +267,7 @@ function Recap({ txs, year, scores, prevExpense }: { txs: Tx[]; year: number; sc
 function BucketSplit({ s }: { s: Summary }) {
   const { t, money, s: settings } = useApp()
   const [hover, setHover] = useState<string | null>(null)
+  const [chart] = useCatChart()
   const pct = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 1 })
   const data = useMemo(
     () => BUCKETS.filter((b) => s.buckets[b] > 0).map((b) => ({ id: b, name: t.bucket[b], color: `var(--color-${b})`, amount: s.buckets[b] })),
@@ -263,6 +275,25 @@ function BucketSplit({ s }: { s: Summary }) {
   )
   return (
     <div className="grid gap-6">
+      {chart === 'treemap' ? (
+        // The same total line as the category cards, so the three treemaps start on one line.
+        <div className="grid gap-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">{t.sum}</span>
+            <span className="num font-display text-2xl leading-none tracking-[-0.02em]">{money(s.expense)}</span>
+          </div>
+          <Treemap
+            rows={[...data].sort((a, b) => b.amount - a.amount).map((d) => ({ id: d.id, amount: d.amount, share: d.amount / s.expense }))}
+            active={hover}
+            onActive={setHover}
+            info={(id) => {
+              const d = data.find((x) => x.id === id)
+              const b = id as Bucket
+              return d && { ...d, sub: `${pct.format(d.amount / s.expense)} · ${t.targetShare(`${settings.ratios[b]}%`)}`, hint: `${d.name}: ${money(d.amount)}, ${pct.format(d.amount / s.expense)}, ${t.targetShare(`${settings.ratios[b]}%`)}` }
+            }}
+          />
+        </div>
+      ) : (
       <Donut
         data={data}
         active={hover}
@@ -282,6 +313,9 @@ function BucketSplit({ s }: { s: Summary }) {
         <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.expenses}</span>
         <span className="num font-display tracking-[-0.02em] text-2xl leading-tight">{money(s.expense, true)}</span>
       </Donut>
+      )}
+      {/* The treemap's tiles already carry each bucket's share and target; the list would only repeat them. */}
+      {chart !== 'treemap' && (
       <ul className="grid gap-3">
         {BUCKETS.map((b) => (
           <li key={b} className={`flex items-center gap-3 text-sm ${fade(hover, b)}`}>
@@ -295,6 +329,7 @@ function BucketSplit({ s }: { s: Summary }) {
           </li>
         ))}
       </ul>
+      )}
     </div>
   )
 }

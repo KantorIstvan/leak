@@ -8,7 +8,7 @@ import { cleanTag, EMPTY_QUERY, filterCount, formatMoney, parseAmount, queryTxs,
 import { ICONS } from './icons'
 import { CategoryPicker } from './pages/Categories'
 import {
-  Amount, BUCKET_BG, Button, CatIcon, fade, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, ShowMore, Switch, useApp, useMonthlyIncome,
+  Amount, BUCKET_BG, Button, CatIcon, fade, chipCls, ConfirmButton, Empty, Field, inputCls, MoneyInput, SearchInput, Segmented, Select, Sheet, ShowMore, Switch, useApp, useMonthlyIncome, usePhone,
 } from './ui'
 
 const SORTS: TxSort[] = ['date-desc', 'date-asc', 'amount-desc', 'amount-asc', 'category', 'note']
@@ -39,6 +39,7 @@ export function TxBrowser({
   const [selected, setSelected] = useState<Set<string> | null>(null) // null = not selecting
   const [bulk, setBulk] = useState(false)
   const [allMonths, setAllMonths] = useState(false)
+  const phone = usePhone()
   const tags = useMemo(() => tagTotals(txs).slice(0, TAGS_MAX), [txs])
   // Searching one #tag also totals and lists it over every month: a trip or a renovation rarely fits in one.
   const words = q.text.trim().split(/\s+/)
@@ -107,7 +108,7 @@ export function TxBrowser({
       ) : (
         <div className="anim-fade flex items-center gap-1 border-b border-ink">
           <div className="min-w-0 flex-1">
-            <SearchInput className="h-10! border-b-0!" placeholder={t.searchTx} value={q.text} onChange={(text) => set({ text })} />
+            <SearchInput className="h-11! border-b-0! md:h-10!" placeholder={phone ? t.search : t.searchTx} value={q.text} onChange={(text) => set({ text })} />
           </div>
           <Button
             variant="ghost"
@@ -327,7 +328,7 @@ function TxList({
                 role={selected ? 'checkbox' : undefined}
                 aria-checked={selected ? on : undefined}
                 onClick={() => onPick(tx)}
-                className={`flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
+                className={`flex min-h-14 w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition focus-visible:outline-2 focus-visible:outline-accent ${
                   on || highlight === tx.categoryId ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
                 }`}
               >
@@ -342,7 +343,7 @@ function TxList({
                 <span className="shrink-0 text-right">
                   <Amount amount={tx.amount} kind={tx.kind} bucket={tx.bucket} income={monthlyIncome} className="block text-sm font-semibold" />
                   {tx.origCurrency && tx.origAmount && <span className="num block text-xs text-zinc-600 dark:text-zinc-400">{formatMoney(tx.origAmount, tx.origCurrency, t.locale)}</span>}
-                  <span className="block text-xs text-zinc-500 dark:text-zinc-400">{tx.createdAt && <span className="mr-1.5 opacity-50">{time.format(tx.createdAt)}</span>}
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400">{tx.createdAt && <span className="mr-1.5 opacity-50 max-md:hidden">{time.format(tx.createdAt)}</span>}
                     {day.format(new Date(tx.date + 'T00:00'))}
                   </span>
                 </span>
