@@ -2,7 +2,7 @@ import { useMemo, useState, type CSSProperties } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ArrowsClockwise, CheckCircle, Drop, Equals, Fire, Plus, Receipt, Target, TrendDown, TrendUp, Trophy, XCircle } from '@phosphor-icons/react'
 import { db, type Kind, type Tx } from '../db'
-import { insights, monthOf, monthScore, plan, ranked, ratiosFor, shiftMonth, summarize, today, type Summary } from '../lib'
+import { earned, hitTarget, insights, investedOf, monthOf, monthScore, savingsIncome, plan, ranked, ratiosFor, shiftMonth, summarize, today, type Summary } from '../lib'
 import { chargeId } from '../cloud'
 import { BUCKET_BG, Button, TIER_TEXT, Card, CatIcon, CategoryBars, PageHeader, PeriodNav, PeriodPicker, Segmented, Stat, useApp, usePhone } from '../ui'
 import { SpendPace, Vessels } from '../charts'
@@ -13,7 +13,8 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
   const txs = useLiveQuery(() => db.txs.where('date').between(`${month}-01`, `${month}-31`, true, true).toArray(), [month])
   // The category hovered in the donut; the transaction list highlights its rows.
   const [hover, setHover] = useState<string | null>(null)
-  const sum = useMemo(() => txs && summarize(txs), [txs])
+  const fromSavings = useMemo(() => savingsIncome(cats), [cats])
+  const sum = useMemo(() => txs && summarize(txs, fromSavings), [txs, fromSavings])
   const [pick, setPick] = useState<Kind>('expense')
   const phone = usePhone()
   // Falls back to whichever side has money; the switch only shows when both do.
@@ -102,10 +103,10 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
           </Card>
         )}
 
-        <ScoreCard month={month} txs={txs} sum={sum} />
+        <ScoreCard month={month} txs={txs} sum={sum} fromSavings={fromSavings} />
 
         <Card title={t.plan} hint={t.planHint} className="max-lg:-order-1 lg:col-span-2">
-          {!sum.income ? (
+          {earned(sum) <= 0 ? (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.noIncome}</p>
           ) : phone ? (
             <Vessels plans={plan(sum, ratios)} />
@@ -200,13 +201,14 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
 }
 
 /** The month's score, once it is over, with the reasons behind it and how it is calculated. */
-function ScoreCard({ month, txs, sum }: { month: string; txs: Tx[]; sum: Summary }) {
+function ScoreCard({ month, txs, sum, fromSavings }: { month: string; txs: Tx[]; sum: Summary; fromSavings: ReadonlySet<string> }) {
   const { t, s, money, cats } = useApp()
   const ratiosAt = (m: string) => ratiosFor(s.ratios, s.ratioHistory, m)
   const ratios = ratiosAt(month)
   const context = useLiveQuery(async () => {
     const [prev, subs, goals] = await Promise.all([
-      db.txs.where('date').between(`${shiftMonth(month, -12)}-01`, `${shiftMonth(month, -1)}-31`, true, true).toArray(),
+      // Every earlier month, not just a year: a streak can run longer than that.
+      db.txs.where('date').below(`${month}-01`).toArray(),
       db.subs.toArray(),
       db.goals.toArray(),
     ])
@@ -214,24 +216,36 @@ function ScoreCard({ month, txs, sum }: { month: string; txs: Tx[]; sum: Summary
   }, [month])
   const current = monthOf(today())
   const closed = month < current
+  // Memoized: hovering the category chart re-renders the whole page, and this reads every earlier transaction.
+  const found = useMemo(
+    () => (context ? insights({ month, txs, ...context, fromSavings, ratiosAt: (m) => ratiosFor(s.ratios, s.ratioHistory, m), closed, recent: month >= shiftMonth(current, -1) }) : []),
+    [context, month, txs, fromSavings, s.ratios, s.ratioHistory, closed, current],
+  )
   const result = closed ? monthScore(sum, ratios) : null
   const pct = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 0 })
   const times = new Intl.NumberFormat(t.locale, { maximumFractionDigits: 1 })
   const name = (id: string) => cats.find((c) => c.id === id)?.name ?? t.uncategorized
 
   const lines: { icon: keyof typeof Icon; text: string }[] = []
-  if (sum.income) {
-    const saved = sum.income - sum.buckets.needs - sum.buckets.wants
-    lines.push({
-      icon: saved * 100 >= sum.income * ratios.investments ? 'ok' : 'bad',
-      text: saved >= 0 ? t.scoreSaved(pct.format(saved / sum.income), `${ratios.investments}%`) : t.scoreOverspent(pct.format(-saved / sum.income)),
-    })
+  const income = earned(sum)
+  if (income > 0) {
+    // One line per half of the score: what the plan asked to invest, then spending against income.
+    const invested = investedOf(sum)
+    if (ratios.investments) lines.push({ icon: hitTarget(sum, ratios) ? 'ok' : 'bad', text: t.scoreInvested(pct.format(invested / income), `${ratios.investments}%`) })
+    // Why that can be less than the Investments bar shows.
+    if (sum.withdrawn) lines.push({ icon: 'calm', text: t.scoreWithdrawn(money(sum.withdrawn)) })
+    else if (sum.buckets.investments > invested) lines.push({ icon: 'calm', text: t.scoreFromSavings(money(sum.buckets.investments), money(invested)) })
+    const saved = income - sum.buckets.needs - sum.buckets.wants
+    lines.push(
+      saved >= 0
+        ? { icon: saved * 5 >= income ? 'ok' : 'calm', text: t.scoreSaved(pct.format(saved / income)) }
+        : { icon: 'bad', text: t.scoreOverspent(pct.format(-saved / income)) },
+    )
     // Limits are the user's own, not part of the score's method: shown, not scored.
     for (const c of cats) {
       const spent = sum.byCategory.get(c.id) ?? 0
       if (c.kind === 'expense' && c.limit && spent > c.limit) lines.push({ icon: 'bad', text: t.insLimit(c.name, money(spent - c.limit), money(c.limit)) })
     }
-    const found = context ? insights({ month, txs, ...context, ratiosAt, closed, recent: month >= shiftMonth(current, -1) }) : []
     for (const i of found) {
       if (i.kind === 'spike') lines.push({ icon: 'spike', text: t.insSpike(name(i.categoryId), money(i.amount), times.format(i.amount / i.avg), money(i.avg), i.better) })
       if (i.kind === 'drop') lines.push({ icon: 'drop', text: t.insDrop(name(i.categoryId), money(i.amount), pct.format(1 - i.amount / i.avg), money(i.avg)) })
@@ -254,7 +268,7 @@ function ScoreCard({ month, txs, sum }: { month: string; txs: Tx[]; sum: Summary
           <span className={`ml-auto text-sm font-medium ${TIER_TEXT[result.tier]}`}>{t.tier[result.tier]}</span>
         </div>
       ) : (
-        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">{sum.income ? t.scorePending : t.scoreNoIncome}</p>
+        <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">{income > 0 ? t.scorePending : t.scoreNoIncome}</p>
       )}
       {lines.length > 0 && (
         <ul className="grid gap-2 text-sm">

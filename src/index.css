@@ -268,3 +268,27 @@ dialog.palette::backdrop {
     opacity: 0;
   }
 }
+
+/* <Spinner> (Auth.tsx): twelve bars fading in turn. Runs with reduced motion too: it says something is happening. */
+.spinner-bar {
+  animation: spinner-fade 1.2s linear infinite;
+}
+@keyframes spinner-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.15;
+  }
+}
+/* The empty slot's caret in the code field. */
+@media (prefers-reduced-motion: no-preference) {
+  .caret-blink {
+    animation: caret-blink 1s step-end infinite;
+  }
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}

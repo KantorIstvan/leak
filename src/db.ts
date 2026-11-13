@@ -18,7 +18,7 @@ export interface Category {
   name: string
   color: string
   kind: Kind
-  bucket: Bucket // default bucket for new expenses in this category
+  bucket: Bucket // expense: the default bucket for new expenses in it. Income: 'investments' marks money taken back out of savings (lib's savingsIncome), else 'needs'
   icon?: string // name from ICONS; missing on categories made before icons existed
   limit?: number | null // most to spend on it in a month (minor units), expense categories only; missing/null = no limit
 }
@@ -68,6 +68,7 @@ export interface Settings {
   currency: string
   theme: Theme
   clock?: '12' | '24' // missing on settings made before this existed: treated as 24
+  catChart?: 'donut' | 'treemap' | null // how category shares are drawn; missing = a treemap on a phone, a donut wider
   colorblind?: boolean // swaps the data palette for one safe for protan/deutan/tritan vision and monochromacy, hatches expenses
   colors?: Partial<Record<DataColor, string>> | null // #rrggbb picked in Settings, over the defaults in light and dark; missing = defaults
   ratios: Record<Bucket, number> // percentages, sum to 100
@@ -89,7 +90,7 @@ export const DEFAULT_SETTINGS: Settings = {
 type NewCategory = Omit<Category, 'id'>
 
 const expense = (name: string, color: string, bucket: Bucket, icon: string): NewCategory => ({ name, color, kind: 'expense', bucket, icon })
-const income = (name: string, color: string, icon: string): NewCategory => ({ name, color, kind: 'income', bucket: 'needs', icon })
+const income = (name: string, color: string, icon: string, fromSavings = false): NewCategory => ({ name, color, kind: 'income', bucket: fromSavings ? 'investments' : 'needs', icon })
 
 export const DEFAULT_CATEGORIES: NewCategory[] = [
   expense('Food', '#f59e0b', 'needs', 'ForkKnife'),
@@ -115,7 +116,7 @@ export const DEFAULT_CATEGORIES: NewCategory[] = [
   expense('Investment', '#8b5cf6', 'investments', 'ChartLineUp'),
   income('Job', '#65a30d', 'Briefcase'),
   income('Family', '#16a34a', 'Users'),
-  income('Sold investments', '#0d9488', 'TrendUp'),
+  income('Sold investments', '#0d9488', 'TrendUp', true),
   income('Friends', '#84cc16', 'HandHeart'),
 ]
 
@@ -216,6 +217,7 @@ const FIELDS: Record<'categories' | 'txs' | 'goals' | 'subs' | 'settings', Recor
     currency: code,
     theme: oneOf('system', 'light', 'dark'),
     clock: nullable(oneOf('12', '24')),
+    catChart: nullable(oneOf('donut', 'treemap')),
     colorblind: absent((v) => typeof v === 'boolean'),
     colors: nullable((v) => typeof v === 'object' && Object.entries(v as object).every(([k, c]) => DATA_COLORS.includes(k as DataColor) && /^#[0-9a-f]{6}$/i.test(c))),
     ratios,

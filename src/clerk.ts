@@ -72,6 +72,11 @@ export const appearance = {
     formFieldLabel: 'text-sm font-medium text-zinc-700 dark:text-zinc-300',
     formFieldInput:
       'h-11 border-0 bg-transparent shadow-[inset_0_-1px_0_var(--color-ink)] transition focus:bg-ink/5 focus:shadow-[inset_0_-2px_0_var(--color-ink)]',
+    // Checkboxes also get formFieldInput's classes, so undo the underline field (`!`) and draw a square ink frame
+    // that fills with ink, inset from the frame, when checked.
+    formFieldCheckboxInput:
+      'mt-0.5 size-4! shrink-0 cursor-pointer appearance-none bg-transparent! shadow-[inset_0_0_0_1.5px_var(--color-ink)]! transition checked:bg-ink! checked:shadow-[inset_0_0_0_1.5px_var(--color-ink),inset_0_0_0_4px_var(--color-panel)]! focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+    formFieldCheckboxLabel: 'text-sm font-medium text-zinc-800 dark:text-zinc-200',
     footer: 'border-t border-line bg-transparent bg-none',
 
     // One email per account: Leak never mails, so a second address would only be one more way in to secure.

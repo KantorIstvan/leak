@@ -1,4 +1,4 @@
-import { BUCKETS, type Bucket, type Goal, type RatioPeriod, type Tx } from './db'
+import { BUCKETS, type Bucket, type Category, type Goal, type RatioPeriod, type Tx } from './db'
 
 // --- Money ----------------------------------------------------------------
 // Amounts are stored as integer minor units (x100) to avoid float drift.
@@ -108,18 +108,24 @@ export function dueDates(lastMonth: string, today: string, day: number) {
 // --- Summaries ------------------------------------------------------------
 
 export interface Summary {
-  income: number
+  income: number // all the money that came in
+  withdrawn: number // the part of it taken back out of savings or investments (savingsIncome): money in, but not earned
   expense: number
   buckets: Record<Bucket, number>
   byCategory: Map<string, number>
 }
 
-export function summarize(txs: Tx[]): Summary {
-  const s: Summary = { income: 0, expense: 0, buckets: { needs: 0, wants: 0, investments: 0 }, byCategory: new Map() }
+/** Ids of the income categories marked as money out of savings or investments: selling them is not earning. */
+export const savingsIncome = (cats: Category[]) => new Set(cats.filter((c) => c.kind === 'income' && c.bucket === 'investments').map((c) => c.id))
+
+/** `fromSavings`: see savingsIncome. Without it all income counts as earned. */
+export function summarize(txs: Tx[], fromSavings?: ReadonlySet<string>): Summary {
+  const s: Summary = { income: 0, withdrawn: 0, expense: 0, buckets: { needs: 0, wants: 0, investments: 0 }, byCategory: new Map() }
   for (const t of txs) {
     s.byCategory.set(t.categoryId, (s.byCategory.get(t.categoryId) ?? 0) + t.amount)
     if (t.kind === 'income') {
       s.income += t.amount
+      if (fromSavings?.has(t.categoryId)) s.withdrawn += t.amount
     } else {
       s.expense += t.amount
       s.buckets[t.bucket ?? 'needs'] += t.amount
@@ -127,6 +133,12 @@ export function summarize(txs: Tx[]): Summary {
   }
   return s
 }
+
+/** What a month earned: its income without what was only moved back out of savings. Budgets and the score go by this. */
+export const earned = (s: Summary) => s.income - s.withdrawn
+
+/** Spending is needs and wants: money put into investments is kept, not spent. */
+const isSpending = (t: Tx) => t.kind === 'expense' && t.bucket !== 'investments'
 
 export interface BucketPlan {
   bucket: Bucket
@@ -136,10 +148,10 @@ export interface BucketPlan {
   left: number // negative = over budget
 }
 
-/** The 50/30/20 split: each bucket's share of the month's income vs what was spent. */
+/** The 50/30/20 split: each bucket's share of the month's earned income vs what was spent. */
 export function plan(s: Summary, ratios: Record<Bucket, number>): BucketPlan[] {
   return BUCKETS.map((bucket) => {
-    const goal = Math.round((s.income * ratios[bucket]) / 100)
+    const goal = Math.round((earned(s) * ratios[bucket]) / 100)
     return { bucket, ratio: ratios[bucket], goal, actual: s.buckets[bucket], left: goal - s.buckets[bucket] }
   })
 }
@@ -163,19 +175,34 @@ export function withRatioChange(current: Record<Bucket, number>, history: RatioP
 export type Tier = 'healthy' | 'coping' | 'vulnerable'
 
 /**
- * 0-100, half how well the month kept its own split, half whether needs + wants stayed under income
- * (indicator 1 of the Financial Health Network's FinHealth Score, whose tiers this uses). Investing is not spending:
- * the saving rate is income minus needs and wants, as Eurostat defines it. Null without income.
+ * What a month put into investments out of what it earned: what went in minus what was taken out, and no more than
+ * needs and wants left over, as investing older savings is not this month's saving.
+ */
+export const investedOf = (s: Summary) => Math.max(0, Math.min(s.buckets.investments - s.withdrawn, earned(s) - s.buckets.needs - s.buckets.wants))
+
+/**
+ * Whether a month with earned income invested its target share out of it (with no investing share: spent less than it).
+ * The target rounds down to a whole unit of the currency: nobody pays in the fraction a percentage leaves.
+ */
+export const hitTarget = (s: Summary, ratios: Record<Bucket, number>) =>
+  earned(s) > 0 && earned(s) >= s.buckets.needs + s.buckets.wants && investedOf(s) >= Math.floor((earned(s) * ratios.investments) / 10000) * 100
+
+/**
+ * 0-100, two halves that each ask one question, so nothing is counted twice.
+ * Plan: one grade per bucket of the month's own split. Needs and wants lose their grade in step with the overspend
+ * (40% over budget loses 40%); investments earn it by what was invested (see investedOf), not by what was left unspent.
+ * Balance: whether needs + wants stayed under income (indicator 1 of the Financial Health Network's FinHealth Score,
+ * whose tiers this uses). Investing is not spending: the saving rate is income minus needs and wants, as Eurostat
+ * defines it. Income is what was earned: money taken out of savings is not. Null without it.
  */
 export function monthScore(s: Summary, ratios: Record<Bucket, number>): { score: number; tier: Tier; rate: number } | null {
-  if (s.income <= 0) return null
-  const goal = (b: Bucket) => (s.income * ratios[b]) / 100
-  const saved = s.income - s.buckets.needs - s.buckets.wants
-  // Share of a bucket's spending that fit its budget.
-  const fit = (b: Bucket) => (s.buckets[b] <= goal(b) ? 1 : goal(b) / s.buckets[b])
-  const kept = goal('investments') ? Math.max(0, Math.min(1, saved / goal('investments'))) : Number(saved >= 0)
-  const plan = ((fit('needs') + fit('wants') + kept) / 3) * 100
-  const rate = saved / s.income
+  const income = earned(s)
+  if (income <= 0) return null
+  const goal = (b: Bucket) => (income * ratios[b]) / 100
+  const kept = (b: Bucket) => (s.buckets[b] <= goal(b) ? 1 : Math.max(0, 1 - (s.buckets[b] - goal(b)) / goal(b)))
+  const invested = goal('investments') ? Math.min(1, investedOf(s) / goal('investments')) : 1
+  const plan = ((kept('needs') + kept('wants') + invested) / 3) * 100
+  const rate = (income - s.buckets.needs - s.buckets.wants) / income
   // FinHealth's "spending about equal to income" = 50; keeping a fifth (the 50/30/20 savings share) = 100.
   const balance = Math.max(0, Math.min(100, 50 + 250 * rate))
   const score = Math.round((plan + balance) / 2)
@@ -196,36 +223,40 @@ export type Insight = { weight: number } & (
 /**
  * What stood out in a month, most notable first (weight is roughly the share of income it is about), at most `limit`.
  * Only facts about this month's own transactions against the user's previous months: nothing the charts already show.
+ * The lines about spending leave investing out: putting in more is not a spike, and less is not a saving.
  */
 export function insights(o: {
   month: string
   txs: Tx[]
-  prev: Tx[] // up to 12 months before `month`
+  prev: Tx[] // the months before `month`: at least 12, all of them for a streak longer than a year
   ratiosAt: (month: string) => Record<Bucket, number>
   subCharges: Set<string> // ids of this month's subscription charges
+  fromSavings?: ReadonlySet<string> // see savingsIncome
   goals: Goal[]
   closed: boolean // the month is over: drops, streaks and what-ifs need the whole month
   recent: boolean // the current or the last finished month: goal estimates are about now
   limit?: number
 }): Insight[] {
   const { month, txs, prev, closed } = o
-  const sum = summarize(txs)
-  if (!sum.income) return []
+  const sum = summarize(txs, o.fromSavings)
+  const income = earned(sum)
+  if (income <= 0) return []
   const out: Insight[] = []
-  const of = (n: number) => n / sum.income
+  const of = (n: number) => n / income
+  const spending = sum.buckets.needs + sum.buckets.wants
 
   // Per category: this month's spending and its average over the previous 3 months that had any spending.
   const spent = (list: Tx[]) => {
     const m = new Map<string, Tx[]>()
-    for (const t of list) if (t.kind === 'expense') m.set(t.categoryId, [...(m.get(t.categoryId) ?? []), t])
+    for (const t of list) if (isSpending(t)) m.set(t.categoryId, [...(m.get(t.categoryId) ?? []), t])
     return m
   }
   const now = spent(txs)
-  const back = prev.filter((t) => t.date >= `${shiftMonth(month, -3)}-01`)
-  const backMonths = new Set(back.filter((t) => t.kind === 'expense').map((t) => monthOf(t.date))).size
+  const back = prev.filter((t) => isSpending(t) && t.date >= `${shiftMonth(month, -3)}-01`)
+  const backMonths = new Set(back.map((t) => monthOf(t.date))).size
   // In whole currency units, like the year view's averages.
   const avgOf = (id: string) =>
-    backMonths ? Math.round(back.reduce((n, t) => n + (t.kind === 'expense' && t.categoryId === id ? t.amount : 0), 0) / backMonths / 100) * 100 : 0
+    backMonths ? Math.round(back.reduce((n, t) => n + (t.categoryId === id ? t.amount : 0), 0) / backMonths / 100) * 100 : 0
   const total = (list: Tx[]) => list.reduce((n, t) => n + t.amount, 0)
   const score = closed ? monthScore(sum, o.ratiosAt(month))?.score : undefined
 
@@ -253,32 +284,31 @@ export function insights(o: {
   }
   // Categories that had an average but nothing at all this month.
   if (closed)
-    for (const id of new Set(back.filter((t) => t.kind === 'expense').map((t) => t.categoryId)))
+    for (const id of new Set(back.map((t) => t.categoryId)))
       if (!now.has(id) && of(avgOf(id)) >= 0.03) out.push({ kind: 'drop', categoryId: id, amount: 0, avg: avgOf(id), weight: of(avgOf(id)) * 0.8 })
 
   // The biggest one-off: not a subscription, not a usual monthly cost like rent, not already a spike.
   const big = txs
-    .filter((t) => t.kind === 'expense' && !o.subCharges.has(t.id) && avgOf(t.categoryId) < 0.5 * t.amount)
+    .filter((t) => isSpending(t) && !o.subCharges.has(t.id) && avgOf(t.categoryId) < 0.5 * t.amount)
     .sort((a, b) => b.amount - a.amount)[0]
-  if (big && !spikes.has(big.categoryId) && big.amount >= 0.2 * sum.expense)
-    out.push({ kind: 'biggest', categoryId: big.categoryId, note: big.note, amount: big.amount, share: big.amount / sum.expense, weight: of(big.amount) })
+  if (big && !spikes.has(big.categoryId) && big.amount >= 0.2 * spending)
+    out.push({ kind: 'biggest', categoryId: big.categoryId, note: big.note, amount: big.amount, share: big.amount / spending, weight: of(big.amount) })
 
   if (closed && score !== undefined) {
     const byMonthKey = new Map<string, Tx[]>()
     for (const t of prev) byMonthKey.set(monthOf(t.date), [...(byMonthKey.get(monthOf(t.date)) ?? []), t])
-    const kept = (m: string, s: Summary) => s.income > 0 && (s.income - s.buckets.needs - s.buckets.wants) * 100 >= s.income * o.ratiosAt(m).investments
     let streak = 0
-    for (let m = month, s = sum; kept(m, s); m = shiftMonth(m, -1), s = summarize(byMonthKey.get(m) ?? [])) streak++
+    for (let m = month, s = sum; hitTarget(s, o.ratiosAt(m)); m = shiftMonth(m, -1), s = summarize(byMonthKey.get(m) ?? [], o.fromSavings)) streak++
     if (streak >= 3) out.push({ kind: 'streak', months: streak, weight: 0.06 + 0.01 * streak })
     const others = [...byMonthKey]
       .filter(([m]) => m.slice(0, 4) === month.slice(0, 4))
-      .map(([m, list]) => monthScore(summarize(list), o.ratiosAt(m))?.score)
+      .map(([m, list]) => monthScore(summarize(list, o.fromSavings), o.ratiosAt(m))?.score)
       .filter((x) => x !== undefined)
     if (others.length >= 3 && others.every((x) => score > x)) out.push({ kind: 'best', weight: 0.12 })
   }
 
-  const subs = total(txs.filter((t) => o.subCharges.has(t.id)))
-  if (of(subs) >= 0.03) out.push({ kind: 'subs', amount: subs, share: subs / sum.expense, weight: of(subs) * 0.5 })
+  const subs = total(txs.filter((t) => o.subCharges.has(t.id) && isSpending(t)))
+  if (of(subs) >= 0.03) out.push({ kind: 'subs', amount: subs, share: subs / spending, weight: of(subs) * 0.5 })
 
   // At this month's pace, when the closest unfinished goal is reached (profit, as the goals page estimates).
   const profit = sum.income - sum.expense
@@ -289,12 +319,12 @@ export function insights(o: {
 }
 
 /** 12 monthly summaries for a year (index 0 = January). */
-export function byMonth(txs: Tx[], year: number): Summary[] {
+export function byMonth(txs: Tx[], year: number, fromSavings?: ReadonlySet<string>): Summary[] {
   const months: Tx[][] = Array.from({ length: 12 }, () => [])
   for (const t of txs) {
     if (Number(t.date.slice(0, 4)) === year) months[Number(t.date.slice(5, 7)) - 1].push(t)
   }
-  return months.map(summarize)
+  return months.map((list) => summarize(list, fromSavings))
 }
 
 /** Category totals sorted desc, with share of the given total. */
@@ -455,24 +485,25 @@ export const reviewDue = (reviewed: string | null | undefined, month: string, ch
 // --- Year recap -----------------------------------------------------------
 
 export interface Recap {
-  income: number
-  saved: number // income minus needs and wants, as the score counts it
-  hit: number // months that reached their savings target
+  income: number // earned, as the score counts it
+  saved: number // of it, what needs and wants left
+  hit: number // months that invested their target share (hitTarget)
   counted: number // months with income
-  top?: { id: string; amount: number; share: number } // the category spent on most
+  top?: { id: string; amount: number; share: number } // the category spent on most, with its share of the spending
   regular?: { note: string; count: number; amount: number } // the expense logged most often
   tag?: { tag: string; amount: number; count: number }
 }
 
 /** What a year came to, for the recap on the year page. */
-export function yearRecap(txs: Tx[], year: number, ratiosAt: (month: string) => Record<Bucket, number>): Recap {
-  const months = byMonth(txs, year)
-  const sum = summarize(txs)
+export function yearRecap(txs: Tx[], year: number, ratiosAt: (month: string) => Record<Bucket, number>, fromSavings?: ReadonlySet<string>): Recap {
+  const months = byMonth(txs, year, fromSavings)
+  const sum = summarize(txs, fromSavings)
+  const spending = sum.buckets.needs + sum.buckets.wants
   const key = (i: number) => `${year}-${String(i + 1).padStart(2, '0')}`
-  const withIncome = months.map((s, i) => [s, key(i)] as const).filter(([s]) => s.income > 0)
-  const hit = withIncome.filter(([s, m]) => (s.income - s.buckets.needs - s.buckets.wants) * 100 >= s.income * ratiosAt(m).investments).length
+  const withIncome = months.map((s, i) => [s, key(i)] as const).filter(([s]) => earned(s) > 0)
+  const hit = withIncome.filter(([s, m]) => hitTarget(s, ratiosAt(m))).length
 
-  const spent = txs.filter((t) => t.kind === 'expense')
+  const spent = txs.filter(isSpending)
   const cats = new Map<string, number>()
   for (const t of spent) cats.set(t.categoryId, (cats.get(t.categoryId) ?? 0) + t.amount)
   const [topId, topAmount] = [...cats].sort((a, b) => b[1] - a[1])[0] ?? []
@@ -490,11 +521,11 @@ export function yearRecap(txs: Tx[], year: number, ratiosAt: (month: string) => 
   const regular = [...notes.values()].sort((a, b) => b.count - a.count || b.amount - a.amount)[0]
 
   return {
-    income: sum.income,
-    saved: sum.income - sum.buckets.needs - sum.buckets.wants,
+    income: earned(sum),
+    saved: earned(sum) - spending,
     hit,
     counted: withIncome.length,
-    top: topId === undefined ? undefined : { id: topId, amount: topAmount, share: topAmount / sum.expense },
+    top: topId === undefined ? undefined : { id: topId, amount: topAmount, share: topAmount / spending },
     regular: regular && regular.count >= 3 ? regular : undefined,
     tag: tagTotals(txs).find((x) => x.amount > 0),
   }

@@ -390,9 +390,16 @@ function Palette({
         <span className="flex items-center gap-1.5">
           <Keys binding="ArrowUp" />
           <Keys binding="ArrowDown" />
+          {t.paletteMove}
         </span>
-        <Keys binding="Enter" />
-        <Keys binding="Escape" />
+        <span className="flex items-center gap-1.5">
+          <Keys binding="Enter" />
+          {t.paletteRun}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Keys binding="Escape" />
+          {t.paletteClose}
+        </span>
       </div>
     </dialog>
   )

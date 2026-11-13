@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
+import type { Category, Tx } from './db'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, hitTarget, earned, investedOf, savingsIncome, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -219,19 +219,80 @@ describe('suggestNote', () => {
   })
 })
 
-describe('monthScore', () => {
-  const month = (income: number, needs: number, wants: number) => ({ income, expense: needs + wants, buckets: { needs, wants, investments: 0 }, byCategory: new Map() })
-  const r = (needs: number, wants: number, investments: number) => ({ needs, wants, investments })
-  it('scores keeping the plan and spending under income', () => {
-    expect(monthScore(month(500, 260, 120), r(50, 30, 20))).toMatchObject({ score: 99, tier: 'healthy' })
-    // A plan that saves nothing, kept to the letter, still only breaks even.
-    expect(monthScore(month(500, 450, 50), r(90, 10, 0))).toMatchObject({ score: 75, tier: 'coping' })
-    expect(monthScore(month(500, 300, 250), r(50, 30, 20))).toMatchObject({ score: 36, tier: 'vulnerable' })
+describe('money out of savings', () => {
+  const txs = [
+    tx({ kind: 'income', amount: 1000, bucket: null, categoryId: 'job' }),
+    tx({ kind: 'income', amount: 500, bucket: null, categoryId: 'sold' }),
+    tx({ amount: 400 }),
+    tx({ amount: 300, bucket: 'investments' }),
+  ]
+  it('stays in the money that came in, apart from what was earned', () => {
+    expect(summarize(txs)).toMatchObject({ income: 1500, withdrawn: 0 })
+    const s = summarize(txs, new Set(['sold']))
+    expect(s).toMatchObject({ income: 1500, withdrawn: 500, expense: 700 })
+    expect(earned(s)).toBe(1000)
+    expect(investedOf(s)).toBe(0) // 300 in, 500 out
   })
-  it('does not count investing as spending, and skips months without income', () => {
-    const invested = { ...month(500, 250, 150), buckets: { needs: 250, wants: 150, investments: 100 } }
-    expect(monthScore(invested, r(50, 30, 20))?.score).toBe(100)
-    expect(monthScore(month(0, 100, 0), r(50, 30, 20))).toBeNull()
+  it('budgets the split from earned income only', () => {
+    expect(plan(summarize(txs, new Set(['sold'])), { needs: 50, wants: 30, investments: 20 }).map((b) => b.goal)).toEqual([500, 300, 200])
+  })
+  it('names the income categories marked as it', () => {
+    const cats = [{ id: 'job', kind: 'income', bucket: 'needs' }, { id: 'sold', kind: 'income', bucket: 'investments' }, { id: 'etf', kind: 'expense', bucket: 'investments' }] as Category[]
+    expect([...savingsIncome(cats)]).toEqual(['sold'])
+  })
+})
+
+describe('monthScore', () => {
+  const month = (needs: number, wants: number, investments = 0, income = 1000, withdrawn = 0) => ({ income, withdrawn, expense: needs + wants + investments, buckets: { needs, wants, investments }, byCategory: new Map() })
+  const r = { needs: 47, wants: 28, investments: 25 }
+  it('grades each bucket against its own budget, and spending against income', () => {
+    expect(monthScore(month(470, 280, 250), r)).toMatchObject({ score: 100, tier: 'healthy' })
+    // Wants 43% over budget loses 43% of its grade; nothing invested loses all of that one.
+    expect(monthScore(month(300, 400), r)).toMatchObject({ score: 76, tier: 'coping', rate: 0.3 })
+    expect(monthScore(month(300, 400, 250), r)).toMatchObject({ score: 93, tier: 'healthy' })
+    expect(monthScore(month(0, 750), r)).toMatchObject({ score: 67, tier: 'coping' })
+    expect(monthScore(month(600, 500), r)).toMatchObject({ score: 28, tier: 'vulnerable' })
+  })
+  it('does not count money left unspent as invested', () => {
+    expect(monthScore(month(470, 280), r)?.score).toBe(83)
+  })
+  it('credits investing only out of what the month left over', () => {
+    // 150 left after needs and wants, 250 invested: the other 100 came from older savings.
+    expect(monthScore(month(470, 380, 250), r)?.score).toBe(81)
+  })
+  it('gives a plan with no investing share the full grade for it, and skips months without income', () => {
+    expect(monthScore(month(450, 50, 0, 500), { needs: 90, wants: 10, investments: 0 })).toMatchObject({ score: 75, tier: 'coping' })
+    expect(monthScore(month(100, 0, 0, 0), r)).toBeNull()
+  })
+  it('does not count money taken out of savings as income', () => {
+    // Selling 250 and buying it back changes nothing: the same 83 as leaving it alone.
+    expect(monthScore(month(470, 280, 250, 1250, 250), r)?.score).toBe(monthScore(month(470, 280), r)?.score)
+    // Spending 1400 on 1000 earned is no better for selling 500 to cover it.
+    expect(monthScore(month(800, 600, 0, 1500, 500), r)).toMatchObject({ score: 5, tier: 'vulnerable', rate: -0.4 })
+    // Nothing earned, only savings spent: no score.
+    expect(monthScore(month(300, 0, 0, 500, 500), r)).toBeNull()
+  })
+})
+
+describe('hitTarget', () => {
+  const month = (needs: number, wants: number, investments: number, income = 1000, withdrawn = 0) => ({ income, withdrawn, expense: needs + wants + investments, buckets: { needs, wants, investments }, byCategory: new Map() })
+  const r = { needs: 50, wants: 30, investments: 20 }
+  it('needs the target share invested out of the month\'s own income', () => {
+    expect(hitTarget(month(500, 300, 200), r)).toBe(true)
+    expect(hitTarget(month(300, 300, 0), r)).toBe(false) // 40% unspent, none invested
+    expect(hitTarget(month(500, 400, 200), r)).toBe(false) // only 100 was left to invest
+    expect(hitTarget(month(0, 0, 0, 0), r)).toBe(false)
+    expect(hitTarget(month(500, 300, 200, 1200, 200), r)).toBe(false) // bought 200, sold 200
+  })
+  it('lets the target round down to a whole unit of the currency', () => {
+    // 20% of 3333.33 is 666.666: investing 666.00 is the target as anyone would pay it in.
+    expect(hitTarget(month(0, 0, 66600, 333333), r)).toBe(true)
+    expect(hitTarget(month(0, 0, 66500, 333333), r)).toBe(false)
+  })
+  it('with no investing share, needs spending under income', () => {
+    const none = { needs: 70, wants: 30, investments: 0 }
+    expect(hitTarget(month(700, 300, 0), none)).toBe(true)
+    expect(hitTarget(month(700, 400, 0), none)).toBe(false)
   })
 })
 
@@ -282,6 +343,29 @@ describe('insights', () => {
     ]
     expect(run(month).map((i) => i.kind)).toEqual(expect.arrayContaining(['leak', 'drop']))
     expect(run(month, false).map((i) => i.kind)).not.toContain('drop')
+  })
+  it('does not read investing as spending: no spike, drop or biggest expense for it', () => {
+    const before = ordinary.flatMap((t) => (t.categoryId === 'dining' ? [t, tx({ date: t.date, amount: 200, bucket: 'investments', categoryId: 'etf' })] : [t]))
+    const month = (etf: number) => [
+      tx({ date: '2026-09-01', kind: 'income', amount: 1000, bucket: null, categoryId: 'job' }),
+      tx({ date: '2026-09-02', amount: 400, categoryId: 'rent' }),
+      tx({ date: '2026-09-03', amount: 100, bucket: 'wants', categoryId: 'dining' }),
+      ...(etf ? [tx({ date: '2026-09-04', amount: etf, bucket: 'investments', categoryId: 'etf' })] : []),
+    ]
+    const about = (etf: number) =>
+      insights({ month: '2026-09', txs: month(etf), prev: before, ratiosAt: r, subCharges: new Set(), goals: [], closed: true, recent: false, limit: 9 }).filter((i) => 'categoryId' in i && i.categoryId === 'etf')
+    expect(about(0)).toEqual([])
+    expect(about(500)).toEqual([])
+  })
+  it('counts a streak of investing the target past a year', () => {
+    const months = Array.from({ length: 15 }, (_, i) => shiftMonth('2026-09', -i))
+    const each = (m: string) => [
+      tx({ id: `${m}i`, date: `${m}-01`, kind: 'income', amount: 1000, bucket: null, categoryId: 'job' }),
+      tx({ id: `${m}r`, date: `${m}-02`, amount: 400, categoryId: 'rent' }),
+      tx({ id: `${m}v`, date: `${m}-03`, amount: 200, bucket: 'investments', categoryId: 'etf' }),
+    ]
+    const found = insights({ month: '2026-09', txs: each('2026-09'), prev: months.slice(1).flatMap(each), ratiosAt: r, subCharges: new Set(), goals: [], closed: true, recent: false, limit: 9 })
+    expect(found).toContainEqual(expect.objectContaining({ kind: 'streak', months: 15 }))
   })
 })
 
@@ -334,6 +418,7 @@ describe('yearRecap', () => {
     const txs = [
       tx('2026-01-05', 1000, 'income', 'job'),
       tx('2026-01-06', 500, 'expense', 'rent'),
+      tx('2026-01-07', 200, 'expense', 'etf', '', 'investments'),
       tx('2026-02-05', 1000, 'income', 'job'),
       tx('2026-02-06', 900, 'expense', 'rent'),
       ...['01', '02', '03'].map((m) => tx(`2026-${m}-10`, 10, 'expense', 'food', m === '02' ? 'lidl' : 'Lidl', 'wants')),
@@ -343,8 +428,8 @@ describe('yearRecap', () => {
     const r = yearRecap(txs, 2026, ratios)
     expect(r.income).toBe(2000)
     expect(r.saved).toBe(2000 - 1400 - 100)
-    expect([r.hit, r.counted]).toEqual([1, 2])
-    expect(r.top).toEqual({ id: 'rent', amount: 1400, share: 1400 / 1500 })
+    expect([r.hit, r.counted]).toEqual([1, 2]) // January invested its 20%; February spent 90% on rent
+    expect(r.top).toEqual({ id: 'rent', amount: 1400, share: 1400 / 1500 }) // of spending: investing is not part of it
     expect(r.regular).toEqual({ note: 'Lidl', count: 3, amount: 30 })
     expect(r.tag).toEqual({ tag: 'trip', amount: 70, count: 1 })
   })

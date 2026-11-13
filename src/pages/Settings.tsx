@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { useClerk, useUser } from '@clerk/react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { CloudCheck, DownloadSimple, GithubLogo, Globe, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
-import { add, replaceAll, saveSettings, undoable, wipeAll } from '../cloud'
+import { DownloadSimple, GithubLogo, Globe, SignOut, UploadSimple, UserGear } from '@phosphor-icons/react'
+import { add, replaceAll, saveSettings, syncStatus, undoable, wipeAll } from '../cloud'
+import { StatusBadge, type BadgeState } from '../Badge'
 import { decodeCsv, missing, readCsv, sameName, toCsv, type Row } from '../csv'
 import { BUCKETS, DATA_COLORS, db, exportBackup, rekey, type Backup, type Bucket, type DataColor, type Kind } from '../db'
 import { monthOf, today } from '../lib'
 import { BUCKET_BG, Button, Card, ConfirmButton, CurrencySelect, PageHeader, Segmented, Select, Switch, useApp, useCatChart, useMonthlyIncome } from '../ui'
 import { desktop } from '../clerk'
 import { ShortcutsCard } from '../Commands'
+import { checkForUpdate } from '../Updater'
 import { ColorPicker, SWATCHES } from './Categories'
 
 const update = saveSettings
@@ -74,9 +76,40 @@ export function SettingsPage() {
         </div>
         <CsvCard />
         <DataCard />
+        {desktop && <UpdatesCard />}
         <Credit />
       </div>
     </>
+  )
+}
+
+/** Checks for a new release on demand; one found opens the same dialog as the check at launch. */
+function UpdatesCard() {
+  const { t } = useApp()
+  const [state, setState] = useState<'idle' | 'checking' | 'latest' | 'failed'>('idle')
+  const run = async () => {
+    setState('checking')
+    try {
+      setState((await checkForUpdate()) ? 'idle' : 'latest')
+    } catch (e) {
+      console.error(e)
+      setState('failed')
+    }
+  }
+  return (
+    <Card title={t.updates}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={run} disabled={state === 'checking'}>
+          {t.checkUpdates}
+        </Button>
+        {state !== 'idle' && (
+          <StatusBadge
+            state={state === 'checking' ? 'busy' : state === 'latest' ? 'done' : 'error'}
+            label={state === 'checking' ? t.checkingUpdates : state === 'latest' ? t.upToDate : t.checkFailed}
+          />
+        )}
+      </div>
+    </Card>
   )
 }
 
@@ -212,11 +245,32 @@ function ColorRow({ k, value, open, onToggle }: { k: DataColor; value: string; o
   )
 }
 
+/**
+ * The sync status, but "busy" only once a sync has run for 400 ms: every window focus syncs, and most finish quicker,
+ * so the badge would otherwise flick to "Syncing…" and back each time.
+ */
+function useSlowBusy(state: 'busy' | 'done' | 'error') {
+  // What to keep showing while a sync is still quick (React's "information from previous renders" pattern).
+  const [settled, setSettled] = useState<'done' | 'error'>(state === 'error' ? 'error' : 'done')
+  if (state !== 'busy' && state !== settled) setSettled(state)
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    if (state !== 'busy') return
+    const id = setTimeout(() => setSlow(true), 400)
+    return () => {
+      clearTimeout(id)
+      setSlow(false)
+    }
+  }, [state])
+  return state === 'busy' && !slow ? settled : state
+}
+
 /** Profile row as settings pages usually show it: avatar, name and email, with account actions on the side. */
 function AccountCard() {
   const { t } = useApp()
   const { user } = useUser()
   const clerk = useClerk()
+  const sync = useSlowBusy(useSyncExternalStore(syncStatus.subscribe, syncStatus.get))
   if (!user) return null
   const email = user.primaryEmailAddress?.emailAddress
   const name = user.fullName || user.username || email
@@ -227,10 +281,7 @@ function AccountCard() {
         <div className="min-w-0 flex-1">
           <div className="truncate font-display text-xl leading-tight">{name}</div>
           {email && email !== name && <div className="truncate text-sm text-zinc-600 dark:text-zinc-400">{email}</div>}
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-            <CloudCheck size={14} weight="bold" aria-hidden />
-            {t.synced}
-          </div>
+          <StatusBadge className="mt-2" live={false} state={sync} label={sync === 'busy' ? t.syncing : sync === 'done' ? t.synced : t.syncOffline} />
         </div>
         <div className="flex w-full gap-2 sm:w-auto">
           <Button className="flex-1 sm:flex-none" onClick={() => clerk.openUserProfile()}>
@@ -428,7 +479,7 @@ async function save(text: string, name: string, type: string) {
 }
 
 const fileCls =
-  'inline-flex h-10 cursor-pointer items-center gap-2 px-4 text-[13px] font-medium tracking-[0.08em] text-zinc-900 uppercase ring-1 ring-ink ring-inset transition focus-within:outline-2 focus-within:outline-accent hover:bg-ink/5 dark:text-zinc-100'
+  'inline-flex h-10 cursor-pointer items-center gap-2 px-4 text-[13px] font-medium tracking-[0.08em] text-zinc-900 uppercase ring-1 ring-ink ring-inset transition focus-within:outline-2 focus-within:outline-accent hover:bg-ink/5 has-disabled:pointer-events-none has-disabled:opacity-40 dark:text-zinc-100'
 
 /** Year + month pickers for a "YYYY-MM" value. */
 function MonthPick({ label, value, years, onChange }: { label: string; value: string; years: string[]; onChange: (m: string) => void }) {
@@ -473,7 +524,7 @@ function CsvCard() {
   const firstYear = Number(first.slice(0, 4))
   const years = Array.from({ length: Number(now.slice(0, 4)) - firstYear + 1 }, (_, i) => String(firstYear + i))
   const [plan, setPlan] = useState<CsvPlan | null>(null)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [msg, setMsg] = useState<Msg | null>(null)
   const name = (id: string) => cat.get(id)?.name ?? t.uncategorized
   const findCat = <C extends { name: string; kind: Kind }>(list: C[], r: Row) => list.find((c) => c.kind === r.kind && sameName(c.name, r.category))
 
@@ -489,7 +540,7 @@ function CsvCard() {
     if (!file) return
     setMsg(null)
     const parsed = readCsv(decodeCsv(await file.arrayBuffer(), s.lang), t.uncategorized)
-    if (!parsed) return setMsg({ ok: false, text: t.csvInvalid })
+    if (!parsed) return setMsg({ state: 'error', label: t.csvInvalid })
     const rows = missing(parsed.rows, await db.txs.toArray(), name)
     const newCats: CsvPlan['newCats'] = []
     for (const r of rows) if (!findCat(cats, r) && !findCat(newCats, r)) newCats.push({ name: r.category, kind: r.kind })
@@ -498,6 +549,8 @@ function CsvCard() {
 
   async function confirmImport() {
     const p = plan!
+    setPlan(null)
+    setMsg({ state: 'busy', label: t.importing })
     try {
       await undoable({ what: 'import', table: 'txs', n: p.rows.length }, async () => {
         const made = await add(
@@ -525,13 +578,12 @@ function CsvCard() {
           }),
         )
       })
-      setMsg({ ok: true, text: t.csvAdded(p.rows.length) })
+      setMsg({ state: 'done', label: t.csvAdded(p.rows.length) })
     } catch (e) {
       // Some batches may be in already: this plan would add those twice, picking the file again only adds the rest.
       console.error(e)
-      setMsg({ ok: false, text: t.csvFailed })
+      setMsg({ state: 'error', label: t.importStopped, detail: t.csvFailed })
     }
-    setPlan(null)
   }
 
   return (
@@ -549,7 +601,7 @@ function CsvCard() {
           <label className={fileCls}>
             <UploadSimple size={16} />
             {t.importCsv}
-            <input type="file" accept="text/csv,.csv" className="sr-only" onChange={pick} />
+            <input type="file" accept="text/csv,.csv" className="sr-only" disabled={msg?.state === 'busy'} onChange={pick} />
           </label>
         </div>
       </div>
@@ -572,15 +624,27 @@ function CsvCard() {
           </div>
         </div>
       )}
-      {msg && <p className={`anim-fade mt-3 text-sm ${msg.ok ? 'text-zinc-700 dark:text-zinc-300' : 'font-medium text-rose-700 dark:text-rose-400'}`}>{msg.text}</p>}
+      <Status msg={msg} />
     </Card>
+  )
+}
+
+/** How an import went: a badge that turns from busy to done or failed, and why when it failed. */
+type Msg = { state: BadgeState; label: string; detail?: string }
+function Status({ msg }: { msg: Msg | null }) {
+  if (!msg) return null
+  return (
+    <div className="mt-3 grid justify-items-start gap-2">
+      <StatusBadge state={msg.state} label={msg.label} />
+      {msg.detail && <p className="anim-fade text-sm text-zinc-600 dark:text-zinc-400">{msg.detail}</p>}
+    </div>
   )
 }
 
 function DataCard() {
   const { t } = useApp()
   const [pending, setPending] = useState<Backup | null>(null)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [msg, setMsg] = useState<Msg | null>(null)
 
   async function download() {
     await save(JSON.stringify(await exportBackup(), null, 2), `leak-backup-${today()}.json`, 'application/json')
@@ -596,19 +660,21 @@ function DataCard() {
       setMsg(null)
     } catch {
       setPending(null)
-      setMsg({ ok: false, text: t.importFailed })
+      setMsg({ state: 'error', label: t.importFailed })
     }
   }
 
   async function confirmImport() {
+    const backup = pending!
+    setPending(null)
+    setMsg({ state: 'busy', label: t.importing })
     try {
-      await replaceAll(pending!)
-      setMsg({ ok: true, text: t.imported })
+      await replaceAll(backup)
+      setMsg({ state: 'done', label: t.imported })
     } catch (e) {
       console.error(e)
-      setMsg({ ok: false, text: t.importNetworkFailed })
+      setMsg({ state: 'error', label: t.importStopped, detail: t.importNetworkFailed })
     }
-    setPending(null)
   }
 
   return (
@@ -621,7 +687,7 @@ function DataCard() {
         <label className={fileCls}>
           <UploadSimple size={16} />
           {t.importBackup}
-          <input type="file" accept="application/json,.json" className="sr-only" onChange={pick} />
+          <input type="file" accept="application/json,.json" className="sr-only" disabled={msg?.state === 'busy'} onChange={pick} />
         </label>
       </div>
 
@@ -636,7 +702,7 @@ function DataCard() {
           </Button>
         </div>
       )}
-      {msg && <p className={`mt-3 text-sm ${msg.ok ? 'text-zinc-700 dark:text-zinc-300' : 'font-medium text-rose-700 dark:text-rose-400'}`}>{msg.text}</p>}
+      <Status msg={msg} />
 
       <div className="mt-6 border-t border-zinc-100 pt-5 dark:border-zinc-800">
         <p className="mb-3 text-sm text-zinc-600 dark:text-zinc-400">{t.wipeConfirm}</p>

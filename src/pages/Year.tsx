@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { BUCKETS, db, type Bucket, type Tx } from '../db'
-import { byMonth, monthOf, monthScore, ranked, ratiosFor, summarize, today, yearRecap, type Summary } from '../lib'
+import { byMonth, monthOf, monthScore, ranked, ratiosFor, savingsIncome, summarize, today, yearRecap, type Summary } from '../lib'
 import { BUCKET_BG, TIER_TEXT, Card, CategoryBars, CatIcon, Donut, Empty, fade, PageHeader, PeriodNav, PeriodPicker, Stat, useApp, useCatChart, usePhone } from '../ui'
+import { ChartLineUp, House, Sparkle, type Icon } from '@phosphor-icons/react'
 import { TargetBars, Treemap, YearBars } from '../charts'
 
 export function YearPage({ year, setYear, openMonth }: { year: number; setYear: (y: number) => void; openMonth: (m: string) => void }) {
@@ -22,7 +23,8 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
   useEffect(() => {
     open.current = openMonth
   })
-  const months = useMemo(() => (txs ? byMonth(txs, year) : []), [txs, year])
+  const fromSavings = useMemo(() => savingsIncome(cats), [cats])
+  const months = useMemo(() => (txs ? byMonth(txs, year, fromSavings) : []), [txs, year, fromSavings])
   const key = (i: number) => `${year}-${String(i + 1).padStart(2, '0')}`
   // Only finished months are scored, each with the split it was planned with.
   const scores = months.map((m, i) => (key(i) < monthOf(today()) ? monthScore(m, ratiosFor(s.ratios, s.ratioHistory, key(i))) : null))
@@ -214,8 +216,8 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
 
 /** The year in a few facts: shown once it is over, or from December on. */
 function Recap({ txs, year, scores, prevExpense }: { txs: Tx[]; year: number; scores: ({ score: number; rate: number } | null)[]; prevExpense: number }) {
-  const { t, s, money, cat } = useApp()
-  const r = yearRecap(txs, year, (m) => ratiosFor(s.ratios, s.ratioHistory, m))
+  const { t, s, money, cat, cats } = useApp()
+  const r = yearRecap(txs, year, (m) => ratiosFor(s.ratios, s.ratioHistory, m), savingsIncome(cats))
   const expense = summarize(txs).expense
   const pct = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 0 })
   const change = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 0, signDisplay: 'exceptZero' })
@@ -263,12 +265,15 @@ function Recap({ txs, year, scores, prevExpense }: { txs: Tx[]; year: number; sc
   )
 }
 
+/** A bucket's icon, so its treemap tile and list row read like a category's. */
+const BUCKET_ICON: Record<Bucket, Icon> = { needs: House, wants: Sparkle, investments: ChartLineUp }
+
 /** Donut of how the year's spending split across the buckets, each against its target share. */
 function BucketSplit({ s }: { s: Summary }) {
   const { t, money, s: settings } = useApp()
   const [hover, setHover] = useState<string | null>(null)
   const [chart] = useCatChart()
-  const pct = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 1 })
+  const pct = new Intl.NumberFormat(t.locale, { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 })
   const data = useMemo(
     () => BUCKETS.filter((b) => s.buckets[b] > 0).map((b) => ({ id: b, name: t.bucket[b], color: `var(--color-${b})`, amount: s.buckets[b] })),
     [s, t],
@@ -289,7 +294,7 @@ function BucketSplit({ s }: { s: Summary }) {
             info={(id) => {
               const d = data.find((x) => x.id === id)
               const b = id as Bucket
-              return d && { ...d, sub: `${pct.format(d.amount / s.expense)} · ${t.targetShare(`${settings.ratios[b]}%`)}`, hint: `${d.name}: ${money(d.amount)}, ${pct.format(d.amount / s.expense)}, ${t.targetShare(`${settings.ratios[b]}%`)}` }
+              return d && { ...d, icon: BUCKET_ICON[b], hint: `${d.name}: ${money(d.amount)}, ${pct.format(d.amount / s.expense)}, ${t.targetShare(`${settings.ratios[b]}%`)}` }
             }}
           />
         </div>
@@ -314,7 +319,37 @@ function BucketSplit({ s }: { s: Summary }) {
         <span className="num font-display tracking-[-0.02em] text-2xl leading-tight">{money(s.expense, true)}</span>
       </Donut>
       )}
-      {/* The treemap's tiles already carry each bucket's share and target; the list would only repeat them. */}
+      {/* Under the treemap, the same ranked list as the two category cards beside it, so the three columns match. */}
+      {chart === 'treemap' && (
+        <ul className="grid gap-3">
+          {[...data]
+            .sort((a, b) => b.amount - a.amount)
+            .map((d) => {
+              const b = d.id as Bucket
+              const I = BUCKET_ICON[b]
+              return (
+                <li key={b} className={`flex items-center gap-3 ${fade(hover, b)}`}>
+                  <span className="grid size-7 shrink-0 place-items-center" style={{ background: `color-mix(in oklab, ${d.color} 14%, transparent)`, color: d.color }} aria-hidden>
+                    <I size={15} weight="duotone" />
+                  </span>
+                  <div className="grid min-w-0 flex-1 gap-1.5">
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="truncate">
+                        {d.name}
+                        <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">{t.targetShare(`${settings.ratios[b]}%`)}</span>
+                      </span>
+                      <span className="num shrink-0">
+                        {money(d.amount)}
+                        <span className="ml-2 inline-block w-14 text-right text-zinc-500 dark:text-zinc-400">{pct.format(d.amount / s.expense)}</span>
+                      </span>
+                    </div>
+                    <div className="anim-grow h-1.5 origin-left" style={{ width: `${Math.max(2, (d.amount / data.reduce((m, x) => Math.max(m, x.amount), 0)) * 100)}%`, background: d.color }} />
+                  </div>
+                </li>
+              )
+            })}
+        </ul>
+      )}
       {chart !== 'treemap' && (
       <ul className="grid gap-3">
         {BUCKETS.map((b) => (
@@ -350,6 +385,7 @@ function divide(s: Summary, n: number): Summary {
   const d = (v: number) => roundTo(v / n)
   return {
     income: d(s.income),
+    withdrawn: d(s.withdrawn),
     expense: d(s.expense),
     buckets: { needs: d(s.buckets.needs), wants: d(s.buckets.wants), investments: d(s.buckets.investments) },
     byCategory: new Map(),

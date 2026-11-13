@@ -30,6 +30,7 @@ const COLS: Record<string, string> = {
   lastMonth: 'last_month',
   createdAt: 'created_at',
   ratioHistory: 'ratio_history',
+  catChart: 'cat_chart',
   origAmount: 'orig_amount',
   origCurrency: 'orig_currency',
   limit: 'monthly_limit',
@@ -475,10 +476,21 @@ const setFailed = (v: boolean) => {
   failed = v
   watchers.forEach((w) => w())
 }
+// Whether a sync is running, for the account's status badge (Settings).
+let syncing = false
+const setSyncing = (v: boolean) => {
+  syncing = v
+  watchers.forEach((w) => w())
+}
+export const syncStatus = {
+  subscribe: syncFailed.subscribe,
+  get: (): 'busy' | 'done' | 'error' => (syncing ? 'busy' : failed ? 'error' : 'done'),
+}
 
 let refreshing: Promise<void> | null = null
 /** Pulls, then charges due subscriptions. Calls made while one runs share it. */
 export function refresh() {
+  if (!refreshing) setSyncing(true)
   return (refreshing ??= pull()
     .then(syncSubs)
     .then(
@@ -488,5 +500,8 @@ export function refresh() {
         throw e
       },
     )
-    .finally(() => (refreshing = null)))
+    .finally(() => {
+      refreshing = null
+      setSyncing(false)
+    }))
 }

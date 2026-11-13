@@ -8,6 +8,7 @@ import { ICON_GROUPS, ICONS } from '../icons'
 import { hexToHsv, hsvToHex, parseAmount, toInput } from '../lib'
 import {
   BUCKET_BG, Button, Card, CatIcon, ConfirmButton, Field, Form, inputCls, MoneyInput, PageHeader, SearchInput, Segmented, Sheet, useApp, useCategoryUsage,
+  Switch,
 } from '../ui'
 
 type Editing = Category | { kind: Kind } | null
@@ -370,7 +371,8 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
         // category_id stays required in the schema, so orphans move to a shared "Uncategorized" category rather than null.
         const home =
           cats.find((c) => c.kind === old.kind && c.name === t.uncategorized && c.id !== old.id) ??
-          (await add('categories', [{ name: t.uncategorized, color: '#a1a1aa', kind: old.kind, bucket: old.bucket, icon: 'DotsThree' }]))[0]
+          // Income landing here is ordinary income: the mark for money out of savings does not follow it.
+          (await add('categories', [{ name: t.uncategorized, color: '#a1a1aa', kind: old.kind, bucket: old.kind === 'income' ? 'needs' : old.bucket, icon: 'DotsThree' }]))[0]
         await update('txs', txIds, { categoryId: home.id })
         // Subscriptions without their own bucket used the old category's: pin it so they stay where they were.
         await update('subs', subs.filter((s) => s.bucket).map((s) => s.id), { categoryId: home.id })
@@ -406,6 +408,10 @@ function CategoryForm({ editing, onDone }: { editing: Category | { kind: Kind };
           <Segmented label={t.defaultBucket} value={bucket} onChange={setBucket} options={BUCKETS.map((b) => ({ value: b, label: t.bucket[b] }))} />
           <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.defaultBucketHint}</span>
         </div>
+      )}
+
+      {editing.kind === 'income' && (
+        <Switch checked={bucket === 'investments'} onChange={(on) => setBucket(on ? 'investments' : 'needs')} label={t.fromSavings} hint={t.fromSavingsHint} />
       )}
 
       {editing.kind === 'expense' && (

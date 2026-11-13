@@ -6,6 +6,7 @@ import { db, type Bucket, type Category, type Kind, type Settings } from './db'
 import type { Dict } from './i18n'
 import { ICONS } from './icons'
 import { Treemap } from './charts'
+import { saveSettings } from './cloud'
 import { avgMonthlyIncome, currencySymbol, groupAmount, monthOf, shiftMonth, tint, today, type Tier } from './lib'
 
 // Shape rules: square corners everywhere (index.css zeroes the radius scale); rounded-full only for dots and switches.
@@ -34,39 +35,33 @@ const onPhoneChange = (cb: () => void) => {
 /** True on a phone-width window; for the parts that swap a component, not just its classes. */
 export const usePhone = () => useSyncExternalStore(onPhoneChange, () => !!phoneQuery?.matches)
 
-export type CatChart = 'donut' | 'treemap'
-const CHART_KEY = 'leak-catchart'
-const chartListeners = new Set<() => void>()
-let chartPicked: CatChart | null = null // the choice when storage is blocked: kept for this session only
-const readChart = (): CatChart | null => {
+export type CatChart = NonNullable<Settings['catChart']>
+/** The pick from before it was synced (0.13.0 kept it on the device): shown until the account has one, then dropped. */
+const LEGACY_CHART_KEY = 'leak-catchart'
+const legacyChart = (): CatChart | null => {
   try {
-    const v = localStorage.getItem(CHART_KEY)
-    return v === 'donut' || v === 'treemap' ? v : chartPicked
+    const v = localStorage.getItem(LEGACY_CHART_KEY)
+    return v === 'donut' || v === 'treemap' ? v : null
   } catch {
-    return chartPicked
+    return null
   }
-}
-const onChartChange = (cb: () => void) => {
-  chartListeners.add(cb)
-  return () => void chartListeners.delete(cb)
 }
 /**
- * How category shares are drawn: a donut or a treemap. Remembered on this device (like the sidebar), since a phone
- * and a desktop may well want different ones; until picked, a phone shows the treemap and a wider window the donut.
+ * How category shares are drawn: a donut or a treemap. Kept in the account's settings, so it follows the user to
+ * every device; until picked, a phone shows the treemap and a wider window the donut.
  */
 export function useCatChart() {
+  const { s } = useApp()
   const phone = usePhone()
-  const picked = useSyncExternalStore(onChartChange, readChart)
-  const set = (v: CatChart) => {
-    chartPicked = v
-    try {
-      localStorage.setItem(CHART_KEY, v)
-    } catch {
-      // storage blocked: this session only
-    }
-    chartListeners.forEach((cb) => cb())
-  }
-  return [picked ?? (phone ? 'treemap' : 'donut'), set] as const
+  const set = (catChart: CatChart) =>
+    saveSettings({ catChart }).then(() => {
+      try {
+        localStorage.removeItem(LEGACY_CHART_KEY)
+      } catch {
+        // storage blocked: nothing was kept there either
+      }
+    })
+  return [s.catChart ?? legacyChart() ?? (phone ? 'treemap' : 'donut'), set] as const
 }
 
 export const BUCKET_BG: Record<Bucket, string> = { needs: 'bg-needs', wants: 'bg-wants', investments: 'bg-investments' }

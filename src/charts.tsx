@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ArrowDownRight, ArrowUpRight, CaretRight } from '@phosphor-icons/react'
 import { BUCKETS, db, type Bucket, type Tx } from './db'
@@ -393,21 +393,25 @@ export function squarify(values: number[], W: number, H: number): Rect[] {
 /** Tiles drawn before the rest fold into "Other". */
 const TILES = 7
 const ASPECT = 1.6
+const GAP = 3 // px between tiles; the outer edges stay flush with the card
 const OTHER = '~other'
 
-/**
- * Category shares as tiles whose area is the amount. Tap one to single it out (the lists that share `active` follow);
- * tap it again to let go. A mouse singles out the tile it is over instead, like the donut's slices. Small categories fold into one "Other" tile, which is not tappable.
- */
 /** What a tile shows when its id is not a category (a subscription, a bucket). */
 export interface TileInfo {
   name: string
   color: string
   icon?: (typeof ICONS)[string]
-  sub?: string // the line under the name instead of the share
   hint?: string // the whole story as a tooltip
 }
 
+/** What fits in a tile this many pixels big: the name and share, or just the icon. */
+const tier = (w: number, h: number) => (w >= 72 && h >= 48 ? 'm' : w >= 26 && h >= 26 ? 's' : 'xs')
+
+/**
+ * Category shares as tiles whose area is the amount. Tap one to single it out (the lists that share `active` follow);
+ * tap it again to let go. A mouse singles out the tile it is over instead, like the donut's slices. Small categories
+ * fold into one "Other" tile, which is not tappable. Laid out in whole pixels, so every gap is the same width.
+ */
 export function Treemap({
   rows,
   active,
@@ -419,58 +423,84 @@ export function Treemap({
   onActive: (id: string | null) => void
   info?: (id: string) => TileInfo | undefined
 }) {
-  const { t, cat } = useApp()
+  const { t, cat, money } = useApp()
   const pct = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 0 })
   const pointer = useRef('') // what pressed last: a mouse click must not also toggle what its hover already shows
+  const box = useRef<HTMLDivElement>(null)
+  const [W, setW] = useState(0)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setW(Math.round(el.getBoundingClientRect().width)))
+    ro.observe(el)
+    setW(Math.round(el.getBoundingClientRect().width))
+    return () => ro.disconnect()
+  }, [])
+  const H = Math.round(W / ASPECT)
   const tiles = useMemo(() => {
+    if (!W) return []
     const top = rows.slice(0, TILES)
     const rest = rows.slice(TILES)
     const all = rest.length > 1 ? [...top, { id: OTHER, amount: rest.reduce((n, r) => n + r.amount, 0), share: rest.reduce((n, r) => n + r.share, 0) }] : rows.slice(0, TILES + 1)
     all.sort((a, b) => b.amount - a.amount)
-    return squarify(all.map((r) => r.amount), 100 * ASPECT, 100).map((r, i) => ({ ...all[i], r }))
-  }, [rows])
+    return squarify(all.map((r) => r.amount), W, H).map((r, i) => {
+      // Snap both edges to whole pixels, then open the gap on the inner side only, so neighbours share one line.
+      const [x0, y0, x1, y1] = [Math.round(r.x), Math.round(r.y), Math.round(r.x + r.w), Math.round(r.y + r.h)]
+      const x = x0 ? x0 + GAP : 0
+      const y = y0 ? y0 + GAP : 0
+      return { ...all[i], x, y, w: Math.max(0, x1 - x), h: Math.max(0, y1 - y) }
+    })
+  }, [rows, W, H])
   return (
-    <div className="relative w-full" style={{ aspectRatio: ASPECT }}>
-      {tiles.map(({ id, share, r }) => {
+    <div ref={box} className="relative w-full" style={{ aspectRatio: ASPECT }}>
+      {tiles.map(({ id, amount, share, x, y, w, h }) => {
         const c = info?.(id) ?? cat.get(id)
         const color = id === OTHER ? '#a1a1aa' : (c?.color ?? '#a1a1aa')
-        const I = c ? ('icon' in c && typeof c.icon === 'string' ? ICONS[c.icon] : (c as TileInfo).icon) : undefined
+        const I = id === OTHER ? ICONS.DotsThree : c ? ('icon' in c && typeof c.icon === 'string' ? ICONS[c.icon] : (c as TileInfo).icon) : undefined
         const name = id === OTHER ? t.otherCats : (c?.name ?? '?')
-        // Roughly the tile's size on a phone: what fits is the icon, then the share, then the name.
-        const [wide, tall] = [r.w / ASPECT, r.h]
-        const box: CSSProperties = { left: `${r.x / ASPECT}%`, top: `${r.y}%`, width: `${wide}%`, height: `${tall}%` }
-        const dim = active && active !== id ? 'opacity-35' : ''
+        const size = tier(w, h)
+        const on = active === id
+        const pos: CSSProperties = { left: x, top: y, width: w, height: h }
         const inner = (
-          <span className={`flex size-full flex-col justify-between overflow-hidden text-left ${wide > 9 ? 'p-1.5' : ''}`} style={{ background: `color-mix(in oklab, ${color} 30%, var(--panel))`, boxShadow: `inset 0 3px 0 ${color}` }}>
-            {I && wide > 9 && tall > 14 ? <I size={16} weight="duotone" style={{ color }} className="mt-0.5 shrink-0" aria-hidden /> : <span />}
-            {wide > 17 && tall > 30 && (
-              <span className="min-w-0">
-                <span className="block truncate text-xs leading-tight font-medium">{name}</span>
-                <span className="num block truncate text-[11px] leading-tight text-zinc-600 dark:text-zinc-300">{(c as TileInfo | undefined)?.sub ?? pct.format(share)}</span>
+          <span
+            className="relative flex size-full flex-col overflow-hidden text-left transition-[background-color] duration-200"
+            style={{ background: `color-mix(in oklab, ${color} ${on ? 44 : 28}%, var(--panel))`, boxShadow: `inset 0 2px 0 ${color}` }}
+          >
+            {size === 'm' ? (
+              <span className="flex size-full flex-col justify-end gap-1 p-2.5">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {I && <I size={15} weight="duotone" style={{ color }} className="shrink-0" aria-hidden />}
+                  <span className="truncate text-xs leading-tight font-medium">{name}</span>
+                </span>
+                <span className="num truncate text-[11px] leading-none text-zinc-600 dark:text-zinc-400">{pct.format(share)}</span>
               </span>
-            )}
+            ) : size === 's' && I ? (
+              <span className="grid size-full place-items-center pt-0.5">
+                <I size={Math.min(18, Math.max(14, Math.min(w, h) / 3))} weight="duotone" style={{ color }} aria-hidden />
+              </span>
+            ) : null}
           </span>
         )
         return id === OTHER ? (
-          <div key={id} className={`absolute overflow-hidden p-px transition-opacity duration-200 ${dim}`} style={box}>
+          <div key={id} className={`absolute transition-opacity duration-200 ${active ? 'opacity-35' : ''}`} style={pos} title={`${name}, ${pct.format(share)}, ${money(amount)}`}>
             {inner}
           </div>
         ) : (
           <button
             key={id}
             type="button"
-            aria-label={(c as TileInfo | undefined)?.hint ?? `${name}, ${pct.format(share)}`}
-            title={(c as TileInfo | undefined)?.hint}
-            aria-pressed={active === id}
+            aria-label={(c as TileInfo | undefined)?.hint ?? `${name}, ${money(amount)}, ${pct.format(share)}`}
+            title={(c as TileInfo | undefined)?.hint ?? `${name} · ${money(amount)} · ${pct.format(share)}`}
+            aria-pressed={on}
             onPointerDown={(e) => (pointer.current = e.pointerType)}
             onPointerEnter={(e) => e.pointerType === 'mouse' && onActive(id)}
             onPointerLeave={(e) => e.pointerType === 'mouse' && onActive(null)}
             onClick={() => {
-              if (pointer.current !== 'mouse') onActive(active === id ? null : id)
+              if (pointer.current !== 'mouse') onActive(on ? null : id)
               pointer.current = ''
             }}
-            className={`absolute overflow-hidden p-px transition-opacity duration-200 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-accent ${dim}`}
-            style={box}
+            className={`absolute transition-opacity duration-200 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${active && !on ? 'opacity-35' : ''}`}
+            style={pos}
           >
             {inner}
           </button>

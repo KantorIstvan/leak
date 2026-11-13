@@ -1,7 +1,17 @@
 import { useEffect, useState } from 'react'
 import { check, type Update } from '@tauri-apps/plugin-updater'
+import { invoke } from '@tauri-apps/api/core'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { Button, Sheet, useApp } from './ui'
+
+let show: ((u: Update) => void) | null = null
+
+/** Asks GitHub for a newer release and, when there is one, opens the dialog that offers it. Resolves to whether there is. */
+export async function checkForUpdate(): Promise<boolean> {
+  const update = await check()
+  if (update) show?.(update)
+  return update !== null
+}
 
 /** On launch, asks GitHub for a newer release and offers to install it. The installer replaces the old version in place. */
 export function Updater() {
@@ -12,16 +22,22 @@ export function Updater() {
 
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return // plain browser (npm run dev)
-    check().then(setUpdate, () => {}) // offline or no release yet: try again next launch
+    show = setUpdate
+    checkForUpdate().catch(() => {}) // offline or no release yet: try again next launch
+    return () => {
+      show = null
+    }
   }, [])
 
   const install = async () => {
     setBusy(true)
     setFailed(false)
     try {
-      await update!.downloadAndInstall()
+      // In Rust rather than update.downloadAndInstall(): the plugin's own rpm install fails on Fedora (see lib.rs).
+      await invoke('install_update')
       await relaunch()
-    } catch {
+    } catch (e) {
+      console.error(e)
       setBusy(false)
       setFailed(true)
     }

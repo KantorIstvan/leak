@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ClerkFailed, SignInButton, useAuth } from '@clerk/react'
+import { ClerkFailed, useAuth } from '@clerk/react'
 import { ArrowsClockwise, CalendarBlank, CaretRight, ChartBar, CloudSlash, DotsThree, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
+import { EmailSignIn, UserButton } from './Auth'
 import { desktop, finishSso, startSso } from './clerk'
 import { Commands } from './Commands'
 import { clearLocal, refresh, setToken, syncFailed } from './cloud'
@@ -205,12 +206,11 @@ function Notice({ title, hint, children }: { title: string; hint: string; childr
 function SignedOut() {
   const t = dicts[DEFAULT_SETTINGS.lang]
   const [waiting, setWaiting] = useState(false)
+  // Web: the email form; its "Other ways to sign in" opens Clerk's modal, with Google and GitHub.
   if (!desktop)
     return (
       <Notice title="Leak" hint={t.accountHint}>
-        <SignInButton mode="modal">
-          <Button variant="primary">{t.signIn}</Button>
-        </SignInButton>
+        <EmailSignIn t={t} />
       </Notice>
     )
   // Desktop: Google/GitHub finish in the browser, and App hears back from it.
@@ -241,9 +241,12 @@ function SignedOut() {
           <GithubLogo size={18} weight="bold" />
           {t.continueGithub}
         </Button>
-        <SignInButton mode="modal">
-          <Button variant="ghost">{t.signInEmail}</Button>
-        </SignInButton>
+        <div className="my-3 flex items-center gap-3 text-xs tracking-[0.12em] text-zinc-500 uppercase">
+          <span className="h-px flex-1 bg-line" />
+          {t.or}
+          <span className="h-px flex-1 bg-line" />
+        </div>
+        <EmailSignIn t={t} />
       </div>
     </Notice>
   )
@@ -366,8 +369,17 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
               {!collapsed && <span className="overflow-hidden">{t.addTx}</span>}
             </Button>
             <SideItem icon={MagnifyingGlass} label={t.paletteHint} collapsed={collapsed} onClick={() => setPalette(true)} />
-            <SideItem icon={GearSix} label={t.nav.settings} on={page === 'settings'} collapsed={collapsed} onClick={() => go('settings')} />
             <SideItem icon={SidebarSimple} label={collapsed ? t.expandSidebar : t.collapseSidebar} collapsed={collapsed} onClick={toggleSidebar} />
+            {/* Settings live in the account menu; without an account (Clerk down) they keep their own item. */}
+            <div className="mt-2 border-t border-line pt-2">
+              <UserButton
+                t={t}
+                collapsed={collapsed}
+                current={page === 'settings'}
+                onSettings={() => go('settings')}
+                fallback={<SideItem icon={GearSix} label={t.nav.settings} on={page === 'settings'} collapsed={collapsed} onClick={() => go('settings')} />}
+              />
+            </div>
           </div>
         </aside>
 

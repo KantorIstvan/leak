@@ -59,6 +59,7 @@ create table settings (
   currency text not null,
   theme text not null check (theme in ('system', 'light', 'dark')),
   clock text check (clock in ('12', '24')),
+  cat_chart text check (cat_chart in ('donut', 'treemap')), -- how category shares are drawn; null = treemap on a phone, donut wider. Added in 0.13.1: alter table settings add column cat_chart text check (cat_chart in ('donut', 'treemap'));
   colorblind boolean not null default false,
   colors jsonb, -- data colours picked in Settings {income: '#rrggbb', ...}; null = defaults. Added in 0.7.0: alter table settings add column colors jsonb;
   ratios jsonb not null,

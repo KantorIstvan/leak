@@ -1,6 +1,6 @@
 [package]
 name = "leak"
-version = "0.13.0"
+version = "0.14.0"
 description = "Leak - personal finance tracker"
 edition = "2021"
 license = "AGPL-3.0-or-later"
@@ -29,3 +29,5 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 rust-ini = "=0.21.1"
 # Sets the Wayland app_id (see lib.rs). Same major version as the glib Tauri's GTK stack already pulls in.
 glib = "0.18"
+# A private temp directory for a downloaded rpm update (see install_rpm in lib.rs). Already in the tree via the updater.
+tempfile = "3"
