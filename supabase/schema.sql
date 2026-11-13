@@ -1,33 +1,42 @@
 -- Leak schema. Paste into Supabase → SQL Editor → Run. Safe to re-run only on an empty project.
 -- Every row belongs to the signed-in Clerk user (the `sub` claim of the session token);
 -- row level security makes each user see and change only their own rows.
+--
+-- Names, notes, tags and amounts are encrypted by the app before upload (src/crypt.ts), so those columns are text
+-- holding 'e1:…' ciphertext and the app checks their values itself. Added in 0.14.1, on an existing database:
+--   alter table categories drop constraint if exists categories_monthly_limit_check, alter column monthly_limit type text using monthly_limit::text;
+--   alter table txs drop constraint if exists txs_amount_check, drop constraint if exists txs_orig_amount_check,
+--     alter column amount type text using amount::text, alter column orig_amount type text using orig_amount::text;
+--   alter table goals drop constraint if exists goals_target_check, drop constraint if exists goals_saved_check,
+--     alter column target type text using target::text, alter column saved type text using saved::text;
+--   alter table subs drop constraint if exists subs_amount_check, alter column amount type text using amount::text;
+-- The app seals the rows already there on its next sync.
 
 create table categories (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default (auth.jwt() ->> 'sub'),
-  name text not null,
+  name text not null, -- encrypted
   color text not null,
   kind text not null check (kind in ('income', 'expense')),
   bucket text not null check (bucket in ('needs', 'wants', 'investments')),
   icon text,
-  monthly_limit bigint check (monthly_limit > 0) -- most to spend in a month; null = none. Added in 0.9.0: alter table categories add column monthly_limit bigint check (monthly_limit > 0);
+  monthly_limit text -- encrypted: most to spend in a month (minor units); null = none
 );
 
 create table txs (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default (auth.jwt() ->> 'sub'),
   date date not null,
-  amount bigint not null check (amount >= 0), -- minor units (fillér / cents) of the base currency
+  amount text not null, -- encrypted: minor units (fillér / cents) of the base currency
   kind text not null check (kind in ('income', 'expense')),
   category_id uuid not null references categories on delete restrict, -- the app moves them to "Uncategorized" before deleting a category
   bucket text check (bucket in ('needs', 'wants', 'investments')), -- null for income
-  note text not null default '',
+  note text not null default '', -- encrypted
   created_at timestamptz not null default now(),
-  -- Paid in another currency: what it cost in that one; `amount` is it converted. Both or neither. Added in 0.8.0:
-  -- alter table txs add column orig_amount bigint check (orig_amount > 0), add column orig_currency text check (orig_currency ~ '^[A-Z]{3}$'), add constraint txs_orig_both check ((orig_amount is null) = (orig_currency is null));
-  orig_amount bigint check (orig_amount > 0),
+  -- Paid in another currency: what it cost in that one; `amount` is it converted. Both or neither.
+  orig_amount text, -- encrypted
   orig_currency text check (orig_currency ~ '^[A-Z]{3}$'),
-  tags text[], -- e.g. {balaton-2026}; null = none. Added in 0.9.0: alter table txs add column tags text[];
+  tags text[], -- each one encrypted, e.g. {balaton-2026}; null = none
   constraint txs_orig_both check ((orig_amount is null) = (orig_currency is null))
 );
 create index txs_user_date on txs (user_id, date);
@@ -35,16 +44,16 @@ create index txs_user_date on txs (user_id, date);
 create table goals (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default (auth.jwt() ->> 'sub'),
-  name text not null,
-  target bigint not null check (target >= 0),
-  saved bigint not null check (saved >= 0)
+  name text not null, -- encrypted
+  target text not null, -- encrypted
+  saved text not null -- encrypted
 );
 
 create table subs (
   id uuid primary key default gen_random_uuid(),
   user_id text not null default (auth.jwt() ->> 'sub'),
-  name text not null,
-  amount bigint not null check (amount >= 0),
+  name text not null, -- encrypted
+  amount text not null, -- encrypted
   category_id uuid not null references categories on delete restrict,
   bucket text check (bucket in ('needs', 'wants', 'investments')),
   day int not null check (day between 1 and 31),

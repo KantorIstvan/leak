@@ -4,7 +4,8 @@ import { ClerkFailed, useAuth } from '@clerk/react'
 import { ArrowsClockwise, CalendarBlank, CaretRight, ChartBar, CloudSlash, DotsThree, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { EmailSignIn, UserButton } from './Auth'
-import { desktop, finishSso, startSso } from './clerk'
+import { clerk, desktop, finishSso, startSso } from './clerk'
+import { setKeyStore } from './crypt'
 import { Commands } from './Commands'
 import { clearLocal, refresh, setToken, syncFailed } from './cloud'
 import { DATA_COLORS, db, DEFAULT_SETTINGS, type Theme, type Tx } from './db'
@@ -159,6 +160,19 @@ export default function App() {
     // A signed-out device keeps none of the account's data. Failures surface through main.tsx's rejection handler.
     if (!isSignedIn) return void clearLocal()
     setToken(() => getToken())
+    // The key that encrypts the account's data in Supabase lives with the Clerk user (crypt.ts), never in Supabase.
+    setKeyStore({
+      read: async (fresh) => {
+        if (fresh) await clerk.user?.reload()
+        const k = clerk.user?.unsafeMetadata.leakKey
+        return typeof k === 'string' ? k : undefined
+      },
+      write: async (k) => {
+        const user = clerk.user
+        if (!user) throw new Error('Not signed in')
+        await user.update({ unsafeMetadata: { ...user.unsafeMetadata, leakKey: k } })
+      },
+    })
     let live = true
     ;(async () => {
       // The sync refreshes the last session's data in the background; offline that data stays, under a banner (Main).

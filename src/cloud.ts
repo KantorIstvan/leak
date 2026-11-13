@@ -3,6 +3,7 @@
 import { createClient } from '@supabase/supabase-js'
 import Dexie from 'dexie'
 import { BUCKETS, db, DEFAULT_SETTINGS, emptyBackup, legacyBackup, mirrorBackup, rekey, type Backup, type Settings, type Sub, type Tx } from './db'
+import { hasSealed, isPlain, open as unseal, seal, setKeyStore, unlock } from './crypt'
 import { convert, rate } from './fx'
 import { dueDates, monthOf, today, withRatioChange } from './lib'
 
@@ -70,9 +71,12 @@ const touch = (table: string, ids: string[]) => pulling.forEach((s) => ids.forEa
 
 type Row = { id: string } & Record<string, unknown>
 
+/** App rows as the server stores them: snake_case, sensitive fields encrypted (crypt.ts). */
+const sealed = (table: Table, rows: object[]) => Promise.all(rows.map((r) => seal(table, toRow(r))))
+
 /** Inserts rows under the ids they carry. */
 async function insert(table: Table, rows: Row[]) {
-  for (const c of chunks(rows, 500)) ok(await sb.from(table).insert(c.map(toRow)))
+  for (const c of chunks(rows, 500)) ok(await sb.from(table).insert(await sealed(table, c)))
   touch(table, rows.map((r) => r.id))
   await db.table(table).bulkPut(rows)
 }
@@ -80,7 +84,8 @@ async function insert(table: Table, rows: Row[]) {
 async function patch(table: Table, ids: string[], changes: object) {
   const row = toRow(changes)
   if (!ids.length || !Object.keys(row).length) return // nothing to send
-  for (const c of chunks(ids, 100)) ok(await sb.from(table).update(row).in('id', c))
+  const out = await seal(table, row)
+  for (const c of chunks(ids, 100)) ok(await sb.from(table).update(out).in('id', c))
   touch(table, ids)
   await db.table(table).bulkUpdate(ids.map((key) => ({ key, changes })))
 }
@@ -106,7 +111,7 @@ export async function add<T extends object>(table: Table, rows: T[]) {
 async function addOnce(table: Table, rows: { id: string }[]) {
   const made = new Set<unknown>()
   for (const c of chunks(rows, 500))
-    for (const r of ok<{ id: string }[]>(await sb.from(table).upsert(c.map(toRow), { onConflict: 'id', ignoreDuplicates: true }).select('id'))) made.add(r.id)
+    for (const r of ok<{ id: string }[]>(await sb.from(table).upsert(await sealed(table, c), { onConflict: 'id', ignoreDuplicates: true }).select('id'))) made.add(r.id)
   const fresh = rows.filter((r) => made.has(r.id))
   touch(table, fresh.map((r) => r.id))
   await db.table(table).bulkPut(fresh)
@@ -288,13 +293,14 @@ export const history = {
   get: () => snapshot,
 }
 
+/** All of a table's rows as the server stores them (still sealed). */
 async function fetchAll(table: Table | 'settings') {
   const rows: Record<string, unknown>[] = []
   // Supabase caps a response at 1000 rows.
   for (let from = 0; ; from += 1000) {
     const page = ok(await sb.from(table).select('*').order(table === 'settings' ? 'user_id' : 'id').range(from, from + 999))
     rows.push(...page)
-    if (page.length < 1000) return rows.map(fromRow)
+    if (page.length < 1000) return rows
   }
 }
 
@@ -334,7 +340,11 @@ export async function pull() {
   const written = new Set<string>()
   pulling.add(written)
   try {
-    const [categories, txs, goals, subs, settings] = await Promise.all([...TABLES, 'settings' as const].map(fetchAll))
+    const names = [...TABLES, 'settings' as const]
+    const raw = await Promise.all(names.map(fetchAll))
+    // An account gets its key on the first pull that finds nothing sealed (a new one, or one from before encryption).
+    await unlock(!raw.some((rows, i) => rows.some((r) => hasSealed(names[i], r))))
+    const [categories, txs, goals, subs, settings] = await Promise.all(raw.map((rows, i) => Promise.all(rows.map(async (r) => fromRow(await unseal(names[i], r))))))
     // No settings: a new account, or a replace that stopped halfway (see replaceAll). Neither is mirrored.
     if (!settings.length) {
       if (!replacing && !leaving) await setUp()
@@ -353,6 +363,12 @@ export async function pull() {
         }),
       ),
     )
+    // Rows saved before encryption, or by an older version, are sealed in place. Ones written here since the fetch
+    // went out sealed already, and must not be overwritten with the older copy.
+    for (const [i, t] of TABLES.entries()) {
+      const plain = raw[i].filter((r) => isPlain(t, r) && !written.has(`${t}/${r.id}`))
+      for (const c of chunks(plain, 500)) ok(await sb.from(t).upsert(await Promise.all(c.map(async (r) => seal(t, await unseal(t, r))))))
+    }
   } finally {
     pulling.delete(written)
   }
@@ -385,7 +401,7 @@ export async function replaceAll(b: Backup) {
   clearHistory() // every row gets a new id: nothing in the history exists any more
   try {
     await wipe()
-    for (const t of TABLES) for (const c of chunks<object>(b[t] ?? [], 500)) ok(await sb.from(t).insert(c.map(toRow)))
+    for (const t of TABLES) for (const c of chunks<object>(b[t] ?? [], 500)) ok(await sb.from(t).insert(await sealed(t, c)))
     ok(await sb.from('settings').insert(settingsRow(b.settings[0])))
   } finally {
     replacing = false
@@ -413,6 +429,7 @@ export async function deleteAccountData() {
 export const wipeAll = async () => replaceAll(rekey({ ...emptyBackup(), settings: [{ ...DEFAULT_SETTINGS, ...(await db.settings.get('app')) }] }))
 export const clearLocal = () => {
   clearHistory()
+  setKeyStore(null)
   return Promise.all(db.tables.map((t) => t.clear()))
 }
 
@@ -431,7 +448,7 @@ export async function syncSubs() {
     // Decided on the server's copy: this device's may be days old, and a charge deleted since must not come back.
     const row = ok<Record<string, unknown> | null>(await sb.from('subs').select('*').eq('id', local.id).maybeSingle())
     if (!row) continue // cancelled on another device
-    const sub = fromRow(row) as unknown as Sub
+    const sub = fromRow(await unseal('subs', row)) as unknown as Sub
     const dates = dueDates(sub.lastMonth, current, sub.day)
     if (!dates.length) continue // charged on another device; the next pull updates this one's copy
     const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'

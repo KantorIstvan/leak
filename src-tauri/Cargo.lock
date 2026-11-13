@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "leak"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "glib",
  "rust-ini",
