@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Check, CheckSquare, FunnelSimple, Hash, PencilSimple, Plus, SortAscending, X } from '@phosphor-icons/react'
 import { remove, undoable, update } from './cloud'
@@ -24,12 +24,14 @@ export function TxBrowser({
   onAdd,
   onEdit,
   highlight,
+  onShowAll,
 }: {
   txs: Tx[]
   month: string
   onAdd: () => void
   onEdit: (tx: Tx) => void
   highlight?: string | null // category whose rows stand out, the rest fade
+  onShowAll?: (all: boolean) => void // the list opened past its first rows, or closed again
 }) {
   const { t, cat, money } = useApp()
   const [q, setQ] = useState<TxQuery>(EMPTY_QUERY)
@@ -231,6 +233,7 @@ export function TxBrowser({
           txs={list}
           selected={selected}
           highlight={highlight}
+          onShowAll={onShowAll}
           onPick={(tx) => {
             if (!selected) return onEdit(tx)
             const next = new Set(selected)
@@ -303,18 +306,22 @@ function TxList({
   highlight,
   onPick,
   years,
+  onShowAll,
 }: {
   txs: Tx[]
   selected: Set<string> | null
   highlight?: string | null
   onPick: (tx: Tx) => void
   years?: boolean // dates show the year: the list spans months
+  onShowAll?: (all: boolean) => void
 }) {
   const { t, s, cat } = useApp()
   const monthlyIncome = useMonthlyIncome()
   const day = new Intl.DateTimeFormat(t.locale, { year: years ? 'numeric' : undefined, month: 'short', day: 'numeric' })
   const time = new Intl.DateTimeFormat(t.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: s.clock === '12' })
   const [all, setAll] = useState(false)
+  // A search with no results unmounts the list, and its rows start short again: say so.
+  useEffect(() => () => onShowAll?.(false), [onShowAll])
   return (
     <>
       <ul className="grid">
@@ -352,7 +359,17 @@ function TxList({
           )
         })}
       </ul>
-      {txs.length > TX_MAX && <ShowMore open={all} hidden={txs.length - TX_MAX} onToggle={() => setAll(!all)} className="-mt-2" />}
+      {txs.length > TX_MAX && (
+        <ShowMore
+          open={all}
+          hidden={txs.length - TX_MAX}
+          onToggle={() => {
+            setAll(!all)
+            onShowAll?.(!all)
+          }}
+          className="-mt-2"
+        />
+      )}
     </>
   )
 }

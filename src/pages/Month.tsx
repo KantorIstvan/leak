@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ArrowsClockwise, CheckCircle, Drop, Equals, Fire, Plus, Receipt, Target, TrendDown, TrendUp, Trophy, XCircle } from '@phosphor-icons/react'
 import { db, type Kind, type Tx } from '../db'
@@ -17,6 +17,8 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
   const sum = useMemo(() => txs && summarize(txs, fromSavings), [txs, fromSavings])
   const [pick, setPick] = useState<Kind>('expense')
   const phone = usePhone()
+  // The list shows all its rows: it can then run far below the left column, so the cards leave its foot.
+  const [listAll, setListAll] = useState(false)
   // Falls back to whichever side has money; the switch only shows when both do.
   const kind = !sum?.income ? 'expense' : !sum.expense ? 'income' : pick
   // Memoized so a hover re-render hands the donut the same data and does not restart its animation.
@@ -95,107 +97,128 @@ export function MonthPage({ month, setMonth, onAdd, onEdit }: { month: string; s
       </div>
       )}
 
-      {/* The transactions span all rows; the 1fr row takes their extra height, so the cards above keep their own. */}
-      <div className="mt-8 grid gap-x-10 gap-y-8 lg:grid-cols-5 lg:grid-rows-[repeat(var(--rows),auto)_1fr]" style={{ '--rows': 2 + Number(limits.length > 0) + Number(sum.expense > 0) } as CSSProperties}>
-        {sum.expense > 0 && (
-          <Card title={t.pace} className="-order-2 lg:col-span-2">
-            <SpendPace month={month} txs={txs} />
-          </Card>
-        )}
-
-        <ScoreCard month={month} txs={txs} sum={sum} fromSavings={fromSavings} />
-
-        <Card title={t.plan} hint={t.planHint} className="max-lg:-order-1 lg:col-span-2">
-          {earned(sum) <= 0 ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.noIncome}</p>
-          ) : phone ? (
-            <Vessels plans={plan(sum, ratios)} />
-          ) : (
-            <ul className="grid gap-5">
-              {plan(sum, ratios).map((b) => {
-                const fill = b.goal ? Math.min(100, (b.actual / b.goal) * 100) : 100
-                return (
-                  <li key={b.bucket}>
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-                      <span className="flex items-center gap-2 font-medium">
-                        <span className={`size-2.5 rounded-sm ${BUCKET_BG[b.bucket]}`} aria-hidden />
-                        {t.bucket[b.bucket]}
-                      </span>
-                      <span className="num">
-                        {money(b.actual)} <span className="text-zinc-500 dark:text-zinc-400">{t.goalOf(money(b.goal))}</span>
-                      </span>
-                    </div>
-                    <div className="mt-2 h-2 overflow-hidden bg-line">
-                      <div className={`h-full ${b.left < 0 ? 'bg-expense' : BUCKET_BG[b.bucket]}`} style={{ width: `${fill}%` }} />
-                    </div>
-                    <div className="num mt-1.5 flex justify-between gap-3 text-xs text-zinc-600 dark:text-zinc-400">
-                      <span className={b.left < 0 ? 'font-medium text-expense' : ''}>
-                        {b.left < 0 ? t.over(money(-b.left)) : t.left(money(b.left))}
-                      </span>
-                      <span>
-                        {pct(b.actual) || '0%'} / {b.ratio}%
+      {(() => {
+        const cards: [string, ReactNode][] = [
+          [
+            'score',
+            <ScoreCard key="score" month={month} txs={txs} sum={sum} fromSavings={fromSavings} />,
+          ],
+          [
+            'plan',
+            <Card key="plan" title={t.plan} hint={t.planHint}>
+              {earned(sum) <= 0 ? (
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">{t.noIncome}</p>
+              ) : phone ? (
+                <Vessels plans={plan(sum, ratios)} />
+              ) : (
+                <ul className="grid gap-5">
+                  {plan(sum, ratios).map((b) => {
+                    const fill = b.goal ? Math.min(100, (b.actual / b.goal) * 100) : 100
+                    return (
+                      <li key={b.bucket}>
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+                          <span className="flex items-center gap-2 font-medium">
+                            <span className={`size-2.5 rounded-sm ${BUCKET_BG[b.bucket]}`} aria-hidden />
+                            {t.bucket[b.bucket]}
+                          </span>
+                          <span className="num">
+                            {money(b.actual)} <span className="text-zinc-500 dark:text-zinc-400">{t.goalOf(money(b.goal))}</span>
+                          </span>
+                        </div>
+                        <div className="mt-2 h-2 overflow-hidden bg-line">
+                          <div className={`h-full ${b.left < 0 ? 'bg-expense' : BUCKET_BG[b.bucket]}`} style={{ width: `${fill}%` }} />
+                        </div>
+                        <div className="num mt-1.5 flex justify-between gap-3 text-xs text-zinc-600 dark:text-zinc-400">
+                          <span className={b.left < 0 ? 'font-medium text-expense' : ''}>
+                            {b.left < 0 ? t.over(money(-b.left)) : t.left(money(b.left))}
+                          </span>
+                          <span>
+                            {pct(b.actual) || '0%'} / {b.ratio}%
+                          </span>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </Card>,
+          ],
+        ]
+        if (limits.length > 0)
+          cards.push([
+            'limits',
+            <Card key="limits" title={t.limits} hint={t.limitsHint}>
+              <ul className="grid gap-4">
+                {limits.map(({ c, spent, limit }) => (
+                  <li key={c.id} className="flex items-center gap-3">
+                    <CatIcon c={c} size="sm" />
+                    <div className="grid min-w-0 flex-1 gap-1.5">
+                      <div className="flex items-baseline justify-between gap-3 text-sm">
+                        <span className="truncate">{c.name}</span>
+                        <span className="num shrink-0">
+                          {money(spent)} <span className="text-zinc-500 dark:text-zinc-400">{t.goalOf(money(limit))}</span>
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden bg-line">
+                        <div className={`anim-grow h-full origin-left ${spent > limit ? 'bg-expense' : ''}`} style={{ width: `${Math.min(100, (spent / limit) * 100)}%`, background: spent > limit ? undefined : c.color }} />
+                      </div>
+                      <span className={`num text-xs ${spent > limit ? 'font-medium text-expense' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                        {spent > limit ? t.over(money(spent - limit)) : t.left(money(limit - spent))}
                       </span>
                     </div>
                   </li>
+                ))}
+              </ul>
+            </Card>,
+          ])
+        if (sum[kind] > 0)
+          cards.push([
+            'category',
+            <Card
+              key="category"
+              title={t.byCategory}
+              action={
+                sum.income > 0 &&
+                sum.expense > 0 && (
+                  <Segmented
+                    label={t.kindLabel}
+                    value={kind}
+                    onChange={setPick}
+                    options={[
+                      { value: 'expense', label: t.expenses },
+                      { value: 'income', label: t.income },
+                    ]}
+                  />
                 )
-              })}
-            </ul>
-          )}
-        </Card>
-
-        {limits.length > 0 && (
-          <Card title={t.limits} hint={t.limitsHint} className="lg:col-span-2">
-            <ul className="grid gap-4">
-              {limits.map(({ c, spent, limit }) => (
-                <li key={c.id} className="flex items-center gap-3">
-                  <CatIcon c={c} size="sm" />
-                  <div className="grid min-w-0 flex-1 gap-1.5">
-                    <div className="flex items-baseline justify-between gap-3 text-sm">
-                      <span className="truncate">{c.name}</span>
-                      <span className="num shrink-0">
-                        {money(spent)} <span className="text-zinc-500 dark:text-zinc-400">{t.goalOf(money(limit))}</span>
-                      </span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden bg-line">
-                      <div className={`anim-grow h-full origin-left ${spent > limit ? 'bg-expense' : ''}`} style={{ width: `${Math.min(100, (spent / limit) * 100)}%`, background: spent > limit ? undefined : c.color }} />
-                    </div>
-                    <span className={`num text-xs ${spent > limit ? 'font-medium text-expense' : 'text-zinc-600 dark:text-zinc-400'}`}>
-                      {spent > limit ? t.over(money(spent - limit)) : t.left(money(limit - spent))}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ul>
+              }
+            >
+              <CategoryBars rows={byCategory} active={hover} onActive={setHover} />
+            </Card>,
+          ])
+        const pace = sum.expense > 0 && (
+          <Card title={t.pace}>
+            <SpendPace month={month} txs={txs} />
           </Card>
-        )}
-
-        <Card title={t.transactions} className="max-lg:order-last lg:col-span-3 lg:col-start-3 lg:[grid-row:1/-1]">
-          <TxBrowser key={month} txs={txs} month={month} onAdd={onAdd} onEdit={onEdit} highlight={hover} />
-        </Card>
-
-        {sum[kind] > 0 && (
-          <Card
-            title={t.byCategory}
-            className="lg:col-span-2 lg:self-start"
-            action={
-              sum.income > 0 &&
-              sum.expense > 0 && (
-                <Segmented
-                  label={t.kindLabel}
-                  value={kind}
-                  onChange={setPick}
-                  options={[
-                    { value: 'expense', label: t.expenses },
-                    { value: 'income', label: t.income },
-                  ]}
-                />
-              )
-            }
-          >
-            <CategoryBars rows={byCategory} active={hover} onActive={setHover} />
+        )
+        const list = (
+          <Card title={t.transactions}>
+            <TxBrowser key={month} txs={txs} month={month} onAdd={onAdd} onEdit={onEdit} highlight={hover} onShowAll={setListAll} />
           </Card>
-        )}
-      </div>
+        )
+        return (
+          <Balanced
+            className="mt-8"
+            left={pace}
+            right={list}
+            cards={cards}
+            // Only new data, or the list opened to all its rows, splits again. Filters, a search and the
+            // Expenses/Income switch never move the cards out from under the pointer.
+            layoutKey={`${month}|${txs.length}|${limits.length}|${listAll}`}
+            // Below lg one column: the plan right after the pace, the list last.
+            narrowOrder={['plan', 'score', 'limits', 'category']}
+          />
+        )
+      })()}
     </>
   )
 }
@@ -260,7 +283,7 @@ function ScoreCard({ month, txs, sum, fromSavings }: { month: string; txs: Tx[];
   }
 
   return (
-    <Card title={t.score} className="lg:col-span-2">
+    <Card title={t.score}>
       {result ? (
         <div className="mb-4 flex items-baseline gap-3">
           <span className={`num font-display tracking-[-0.02em] text-5xl leading-none ${TIER_TEXT[result.tier]}`}>{result.score}</span>
@@ -310,4 +333,102 @@ const tone: Record<keyof typeof Icon, string> = {
   subs: 'text-zinc-500 dark:text-zinc-400',
   goal: 'text-zinc-500 dark:text-zinc-400',
   calm: 'text-zinc-500 dark:text-zinc-400',
+}
+
+// Tailwind's lg: from here the month has two columns.
+const wideQuery = typeof matchMedia === 'undefined' ? null : matchMedia('(min-width: 64rem)')
+const onWideChange = (cb: () => void) => {
+  wideQuery?.addEventListener('change', cb)
+  return () => wideQuery?.removeEventListener('change', cb)
+}
+const useWide = () => useSyncExternalStore(onWideChange, () => !!wideQuery?.matches)
+
+const GAP = 32 // gap-8
+
+/**
+ * Two columns that end level: `left` and `right` head them, and every card goes under whichever
+ * split keeps the taller column shortest, so a short list early in the month gets cards beneath it
+ * instead of an empty half page. The cards keep their order within a column.
+ */
+function Balanced({ left, right, cards, layoutKey, narrowOrder, className = '' }: { left: ReactNode; right: ReactNode; cards: [string, ReactNode][]; layoutKey: string; narrowOrder: string[]; className?: string }) {
+  const wide = useWide()
+  const box = useRef(new Map<string, HTMLElement>())
+  const [rightIds, setRightIds] = useState<ReadonlySet<string>>(new Set())
+  const bind = (id: string) => (el: HTMLElement | null) => void (el ? box.current.set(id, el) : box.current.delete(id))
+  // A string, so the effect reruns when the set of cards changes, not on every new element.
+  const idList = cards.map(([id]) => id).join()
+  // The columns' width, so a resized window (or a collapsed sidebar) splits again; heights alone never trigger it.
+  const grid = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = grid.current
+    if (!el) return
+    let timer = 0
+    const ro = new ResizeObserver(([e]) => {
+      clearTimeout(timer)
+      timer = window.setTimeout(() => setWidth(Math.round(e.contentRect.width)), 150)
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      clearTimeout(timer)
+    }
+  }, [wide])
+
+  useLayoutEffect(() => {
+    if (!wide) return
+    const settle = () => {
+      const h = (id: string) => box.current.get(id)?.offsetHeight ?? 0
+      const order = idList ? idList.split(',') : []
+      let best = { mask: 0, tall: Infinity, moved: Infinity }
+      for (let mask = 0; mask < 1 << order.length; mask++) {
+        let l = h('@left')
+        let r = h('@right')
+        let moved = 0
+        order.forEach((id, i) => {
+          if (mask & (1 << i)) {
+            r += GAP + h(id)
+            moved++
+          } else l += (l ? GAP : 0) + h(id)
+        })
+        const tall = Math.max(l, r)
+        // A split has to save real height to move a card off the left.
+        if (tall < best.tall - 24 || (Math.abs(tall - best.tall) <= 24 && moved < best.moved)) best = { mask, tall, moved }
+      }
+      const next = new Set(order.filter((_, i) => best.mask & (1 << i)))
+      setRightIds((prev) => (prev.size === next.size && [...next].every((id) => prev.has(id)) ? prev : next))
+    }
+    settle()
+    // Charts size themselves after mount; measure once more when they have.
+    const frame = requestAnimationFrame(settle)
+    return () => cancelAnimationFrame(frame)
+  }, [layoutKey, wide, idList, width])
+
+  if (!wide) {
+    const byId = new Map(cards)
+    return (
+      <div className={`grid gap-y-8 ${className}`}>
+        {left}
+        {narrowOrder.map((id) => byId.get(id))}
+        {right}
+      </div>
+    )
+  }
+  const column = (side: 'left' | 'right') => cards.filter(([id]) => rightIds.has(id) === (side === 'right')).map(([id, card]) => (
+    <div key={id} ref={bind(id)}>
+      {card}
+    </div>
+  ))
+  return (
+    <div ref={grid} className={`grid grid-cols-5 items-start gap-x-10 ${className}`}>
+      <div className="col-span-2 grid gap-y-8">
+        {left && <div ref={bind('@left')}>{left}</div>}
+        {column('left')}
+      </div>
+      <div className="col-span-3 grid gap-y-8">
+        <div ref={bind('@right')}>{right}</div>
+        {column('right')}
+      </div>
+    </div>
+  )
 }

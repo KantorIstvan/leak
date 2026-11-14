@@ -113,7 +113,7 @@ function UpdatesCard() {
   )
 }
 
-/** Who made the app. */
+/** Who made the app, and which version this is. */
 function Credit() {
   const { t } = useApp()
   return (
@@ -128,6 +128,8 @@ function Credit() {
         <Globe size={14} weight="bold" aria-hidden />
         kantoristvan.hu
       </ExternalLink>
+      <span aria-hidden>·</span>
+      <span className="tabular-nums">v{__APP_VERSION__}</span>
     </footer>
   )
 }

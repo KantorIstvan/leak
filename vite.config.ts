@@ -1,9 +1,12 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vitest/config'
+import pkg from './package.json' with { type: 'json' }
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // package.json is also Tauri's version source, so the web and desktop builds show the same number.
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   // Tauri expects a fixed port and its own console output.
   clearScreen: false,
   server: { port: 5173, strictPort: true, watch: { ignored: ['**/src-tauri/**'] } },

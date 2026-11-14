@@ -1,21 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { BUCKETS, db, type Bucket, type Tx } from '../db'
-import { byMonth, monthOf, monthScore, ranked, ratiosFor, savingsIncome, summarize, today, yearRecap, type Summary } from '../lib'
-import { BUCKET_BG, TIER_TEXT, Card, CategoryBars, CatIcon, Donut, Empty, fade, PageHeader, PeriodNav, PeriodPicker, Stat, useApp, useCatChart, usePhone } from '../ui'
+import { BUCKETS, db, type Bucket } from '../db'
+import { byMonth, monthOf, monthScore, ranked, ratiosFor, savingsIncome, summarize, today, type Summary } from '../lib'
+import { BUCKET_BG, TIER_TEXT, Button, Card, CategoryBars, Donut, Empty, fade, PageHeader, PeriodNav, PeriodPicker, Stat, useApp, useCatChart, usePhone } from '../ui'
 import { ChartLineUp, House, Sparkle, type Icon } from '@phosphor-icons/react'
 import { TargetBars, Treemap, YearBars } from '../charts'
 
-export function YearPage({ year, setYear, openMonth }: { year: number; setYear: (y: number) => void; openMonth: (m: string) => void }) {
+export function YearPage({ year, setYear, openMonth, openStory }: { year: number; setYear: (y: number) => void; openMonth: (m: string) => void; openStory: () => void }) {
   const { t, s, money, cats } = useApp()
   const txs = useLiveQuery(() => db.txs.where('date').between(`${year}-01-01`, `${year}-12-31`, true, true).toArray(), [year])
-  // Last year's spending, for the recap's comparison.
-  const prevExpense = useLiveQuery(async () => {
-    let n = 0
-    await db.txs.where('date').between(`${year - 1}-01-01`, `${year - 1}-12-31`, true, true).each((tx) => void (tx.kind === 'expense' && (n += tx.amount)))
-    return n
-  }, [year])
   // The month hovered in the bar chart: the months table keeps its row sharp and fades the rest.
   const [hoverMonth, setHoverMonth] = useState<number | null>(null)
   const phone = usePhone()
@@ -119,7 +113,8 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
         <Stat label={t.avgExpense} value={money(roundTo(total.expense / active))} />
       </div>
 
-      {(year < thisYear() || today().slice(5, 7) === '12') && <Recap txs={txs} year={year} scores={scores} prevExpense={prevExpense ?? 0} />}
+      {/* The story takes over from the old facts card: a finished year, or December, gets the band that opens it. */}
+      {(year < thisYear() || today().slice(5, 7) === '12') && <StoryBand year={year} open={openStory} />}
 
       {/* Phones: one chart you touch stands in for the bar chart and the wide months table. */}
       {phone ? (
@@ -215,53 +210,20 @@ export function YearPage({ year, setYear, openMonth }: { year: number; setYear: 
 }
 
 /** The year in a few facts: shown once it is over, or from December on. */
-function Recap({ txs, year, scores, prevExpense }: { txs: Tx[]; year: number; scores: ({ score: number; rate: number } | null)[]; prevExpense: number }) {
-  const { t, s, money, cat, cats } = useApp()
-  const r = yearRecap(txs, year, (m) => ratiosFor(s.ratios, s.ratioHistory, m), savingsIncome(cats))
-  const expense = summarize(txs).expense
-  const pct = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 0 })
-  const change = new Intl.NumberFormat(t.locale, { style: 'percent', maximumFractionDigits: 0, signDisplay: 'exceptZero' })
-  // The highest score; months tied on it (a good year is full of 100s) go by the share of income kept.
-  const best = scores.reduce<number | null>((b, x, i) => {
-    const y = b === null ? null : scores[b]!
-    return x && (!y || x.score > y.score || (x.score === y.score && x.rate > y.rate)) ? i : b
-  }, null)
-  const top = r.top && cat.get(r.top.id)
-
-  const facts: { label: string; value: ReactNode; sub?: string; tone?: string }[] = []
-  if (r.income) facts.push({ label: t.recapSaved, value: money(r.saved), sub: t.ofIncome(pct.format(r.saved / r.income)), tone: r.saved < 0 ? 'text-expense' : undefined })
-  if (best !== null)
-    facts.push({ label: t.recapBest, value: cap(new Intl.DateTimeFormat(t.locale, { month: 'long' }).format(new Date(year, best, 1))), sub: t.recapPoints(scores[best]!.score, pct.format(scores[best]!.rate)) })
-  if (r.top && top)
-    facts.push({
-      label: t.recapTop,
-      value: (
-        <span className="flex min-w-0 items-center gap-2">
-          <CatIcon c={top} size="sm" />
-          <span className="truncate">{top.name}</span>
-        </span>
-      ),
-      sub: `${money(r.top.amount)}, ${pct.format(r.top.share)}`,
-    })
-  if (r.regular) facts.push({ label: t.recapRegular, value: r.regular.note, sub: t.recapTimes(r.regular.count, money(r.regular.amount)) })
-  if (prevExpense > 0 && expense > 0)
-    facts.push({ label: t.recapVsLast(year - 1), value: change.format(expense / prevExpense - 1), sub: `${money(prevExpense)} / ${money(expense)}`, tone: expense > prevExpense ? 'text-expense' : 'text-income' })
-  if (r.tag) facts.push({ label: t.recapTag, value: `#${r.tag.tag}`, sub: money(r.tag.amount) })
-  if (!facts.length) return null
-
+/** The band that opens the year story, in place of the old facts card. */
+function StoryBand({ year, open }: { year: number; open: () => void }) {
+  const { t } = useApp()
   return (
-    <Card title={t.recap(year)} className="anim-fade mt-8">
-      <dl className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
-        {facts.map((f) => (
-          <div key={f.label} className="min-w-0">
-            <dt className="text-[11px] font-medium tracking-[0.12em] text-zinc-500 uppercase dark:text-zinc-400">{f.label}</dt>
-            <dd className={`num mt-1.5 truncate font-display text-2xl leading-tight tracking-[-0.02em] ${f.tone ?? ''}`}>{f.value}</dd>
-            {f.sub && <dd className="num mt-0.5 truncate text-[13px] text-zinc-500 dark:text-zinc-400">{f.sub}</dd>}
-          </div>
-        ))}
-      </dl>
-      {r.counted > 0 && <p className="num mt-6 text-sm text-zinc-600 dark:text-zinc-400">{t.recapHit(r.hit, r.counted)}</p>}
-    </Card>
+    <div className="anim-fade mt-8 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t-2 border-ink pt-4">
+      <div className="min-w-0">
+        <h2 className="font-display text-2xl leading-tight tracking-[-0.02em]">{t.recap(year)}</h2>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{t.story.readyHint}</p>
+      </div>
+      <Button variant="primary" onClick={open}>
+        <Sparkle size={16} weight="fill" />
+        {t.story.open}
+      </Button>
+    </div>
   )
 }
 
@@ -392,7 +354,6 @@ function divide(s: Summary, n: number): Summary {
   }
 }
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 const thisYear = () => Number(today().slice(0, 4))
 

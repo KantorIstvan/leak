@@ -13,8 +13,11 @@ import { dicts } from './i18n'
 import { formatMoney, monthOf, ssoReturn, today } from './lib'
 import { TxForm } from './TxSheet'
 import { Button, Ctx, Sheet, type AppCtx } from './ui'
+import { Sparkle } from '@phosphor-icons/react'
 import { MonthPage } from './pages/Month'
 import { YearPage } from './pages/Year'
+import { YearStory } from './pages/Story'
+import { markStorySeen, storyDue, storySeen } from './story'
 import { GoalsPage } from './pages/Goals'
 import { CategoriesPage } from './pages/Categories'
 import { SettingsPage } from './pages/Settings'
@@ -300,6 +303,12 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const [collapsed, toggleSidebar] = useCollapsed()
   const [palette, setPalette] = useState(false)
   const [more, setMore] = useState(false)
+  // The year story: the year open as a full-screen overlay, and the year-end offer (from 20 December, through January).
+  const [story, setStory] = useState<number | null>(null)
+  const [offer, setOffer] = useState(() => {
+    const due = storyDue()
+    return due && due > storySeen() ? due : null
+  })
   useTheme(settings?.theme)
   // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open past
   // a charge day (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
@@ -412,9 +421,38 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
               </Button>
             </div>
           )}
+          {offer && (
+            <div role="status" className="anim-fade mx-auto mb-6 flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 border-t-2 border-ink py-3 max-md:mt-3 max-md:mb-2">
+              <Sparkle size={18} weight="fill" className="shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{t.story.ready(offer)}</span> <span className="text-zinc-600 dark:text-zinc-400">{t.story.readyHint}</span>
+              </span>
+              <span className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  className="h-8 px-3"
+                  onClick={() => {
+                    markStorySeen(offer)
+                    setOffer(null)
+                  }}
+                >
+                  {t.story.later}
+                </Button>
+                <Button
+                  className="h-8 px-3"
+                  onClick={() => {
+                    setOffer(null)
+                    setStory(offer)
+                  }}
+                >
+                  {t.story.open}
+                </Button>
+              </span>
+            </div>
+          )}
           <div key={page} className="anim-fade-up mx-auto max-w-6xl">
             {page === 'month' && <MonthPage month={month} setMonth={setMonth} onAdd={add} onEdit={setEditing} />}
-            {page === 'year' && <YearPage year={year} setYear={setYear} openMonth={openMonth} />}
+            {page === 'year' && <YearPage year={year} setYear={setYear} openMonth={openMonth} openStory={() => setStory(year)} />}
             {page === 'subs' && <SubsPage />}
             {page === 'goals' && <GoalsPage />}
             {page === 'categories' && <CategoriesPage />}
@@ -422,6 +460,8 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
           </div>
         </main>
       </div>
+
+      {story !== null && <YearStory year={story} onClose={() => setStory(null)} />}
 
       {/* Phones: the tab bar. Three pages, the add button in the middle where the thumb rests, and More for the rest. */}
       <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-ink bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">

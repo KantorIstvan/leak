@@ -112,6 +112,7 @@ delete.
 
 - Syncs across devices after signing in
 - Notes, names and amounts are encrypted on your device before upload
+- A year story: a full-screen walk through what the year came to, offered from 20 December
 - The last synced data stays readable offline
 - Search, filters and bulk edit for transactions
 - CSV import and export, also from other apps
