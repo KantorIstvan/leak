@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ArrowsClockwise, CheckCircle, Drop, Equals, Fire, Plus, Receipt, Target, TrendDown, TrendUp, Trophy, XCircle } from '@phosphor-icons/react'
 import { db, type Kind, type Tx } from '../db'
-import { earned, hitTarget, insights, investedOf, monthOf, monthScore, savingsIncome, plan, ranked, ratiosFor, shiftMonth, summarize, today, type Summary } from '../lib'
+import { earned, hitTarget, insights, investedOf, monthOf, monthScore, savingsIncome, plan, ranked, ratiosFor, shiftMonth, summarize, tierOf, today, type Summary, type Tier } from '../lib'
 import { chargeId } from '../cloud'
 import { BUCKET_BG, Button, TIER_TEXT, Card, CatIcon, CategoryBars, PageHeader, PeriodNav, PeriodPicker, Segmented, Stat, useApp, usePhone } from '../ui'
 import { SpendPace, Vessels } from '../charts'
@@ -249,7 +249,7 @@ function ScoreCard({ month, txs, sum, fromSavings }: { month: string; txs: Tx[];
   const times = new Intl.NumberFormat(t.locale, { maximumFractionDigits: 1 })
   const name = (id: string) => cats.find((c) => c.id === id)?.name ?? t.uncategorized
 
-  const lines: { icon: keyof typeof Icon; text: string }[] = []
+  const lines: ScoreLine[] = []
   const income = earned(sum)
   if (income > 0) {
     // One line per half of the score: what the plan asked to invest, then spending against income.
@@ -285,27 +285,11 @@ function ScoreCard({ month, txs, sum, fromSavings }: { month: string; txs: Tx[];
   return (
     <Card title={t.score}>
       {result ? (
-        <div className="mb-4 flex items-baseline gap-3">
-          <span className={`num font-display tracking-[-0.02em] text-5xl leading-none ${TIER_TEXT[result.tier]}`}>{result.score}</span>
-          <span className="text-sm text-zinc-500 dark:text-zinc-400">/ 100</span>
-          <span className={`ml-auto text-sm font-medium ${TIER_TEXT[result.tier]}`}>{t.tier[result.tier]}</span>
-        </div>
+        <ScoreHead score={result.score} />
       ) : (
         <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">{income > 0 ? t.scorePending : t.scoreNoIncome}</p>
       )}
-      {lines.length > 0 && (
-        <ul className="grid gap-2 text-sm">
-          {lines.map((l, i) => {
-            const I = Icon[l.icon]
-            return (
-              <li key={i} className="flex gap-2">
-                <I size={18} weight="fill" className={`mt-px shrink-0 ${tone[l.icon]}`} aria-hidden />
-                <span className="num">{l.text}</span>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+      <ScoreLines lines={lines} />
       <details className="mt-4 text-sm text-zinc-600 max-md:mt-1 dark:text-zinc-400">
         <summary className="cursor-pointer font-medium text-zinc-700 max-md:py-3 dark:text-zinc-300">{t.scoreHow}</summary>
         <div className="mt-2 grid gap-2">
@@ -316,6 +300,85 @@ function ScoreCard({ month, txs, sum, fromSavings }: { month: string; txs: Tx[];
         </div>
       </details>
     </Card>
+  )
+}
+
+/** A finished month's score: the number and its tier, over the scale of the three tiers. */
+export function ScoreHead({ score }: { score: number }) {
+  const { t } = useApp()
+  const tier = tierOf(score)
+  return (
+    <div className="mb-5 grid gap-3">
+      <div className="flex items-baseline gap-3">
+        <span className={`num font-display text-5xl leading-none tracking-[-0.02em] ${TIER_TEXT[tier]}`}>{score}</span>
+        <span className="text-sm text-zinc-500 dark:text-zinc-400">/ 100</span>
+        <span className={`ml-auto text-sm font-medium ${TIER_TEXT[tier]}`}>{t.tier[tier]}</span>
+      </div>
+      <ScoreScale score={score} />
+    </div>
+  )
+}
+
+// The tiers on the scale, 40, 40 and 20 points wide; bar and labels share one grid so each label sits under its band.
+const TIERS = [
+  { tier: 'vulnerable', from: 0, to: 39, bg: 'bg-expense' },
+  { tier: 'coping', from: 40, to: 79, bg: 'bg-wants' },
+  { tier: 'healthy', from: 80, to: 100, bg: 'bg-income' },
+] as const satisfies readonly { tier: Tier; from: number; to: number; bg: string }[]
+const TIER_COLS = 'grid grid-cols-[40fr_40fr_20fr]'
+
+/**
+ * Where a score falls: the three tiers as a thin bar in the data colours (so colour-blind mode and picked colours
+ * apply), an ink needle at the score, each tier's name and range under it. The score's own tier reads in ink.
+ */
+export function ScoreScale({ score }: { score: number }) {
+  const { t } = useApp()
+  const tier = tierOf(score)
+  return (
+    <div aria-hidden className="@container relative pt-1.5">
+      <div className={`${TIER_COLS} h-1.5 gap-px`}>
+        {TIERS.map((b) => (
+          <span key={b.tier} className={`block h-full ${b.bg} ${b.tier === tier ? '' : 'opacity-40'}`} />
+        ))}
+      </div>
+      <span className="absolute top-0 h-4.5 w-0.5 -translate-x-1/2 bg-ink" style={{ left: `${Math.min(100, Math.max(0, score))}%` }} />
+      {/* Each name at its band's start; the last band is the narrowest, so its name ends at the bar's end instead. On a
+          narrow card (a small phone, the longer Hungarian names) a name and its range stack, so the labels never meet. */}
+      <div className="relative mt-2 h-6 text-[11px] leading-3 whitespace-nowrap text-zinc-500 @min-[22rem]:h-3 dark:text-zinc-400">
+        {TIERS.map((b, i) => (
+          <span
+            key={b.tier}
+            className={`absolute top-0 flex flex-col @min-[22rem]:flex-row @min-[22rem]:gap-1 ${i === TIERS.length - 1 ? 'items-end' : ''}`}
+            style={i === TIERS.length - 1 ? { right: 0 } : { left: `${b.from}%` }}
+          >
+            <span className={b.tier === tier ? 'font-medium text-zinc-900 dark:text-zinc-100' : ''}>{t.tier[b.tier]}</span>
+            <span className="num">
+              {b.from}–{b.to}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export type ScoreLine = { icon: keyof typeof Icon; text: string }
+
+/** The lines under the score: what earned and what cost points, and what stood out in the month. */
+export function ScoreLines({ lines }: { lines: ScoreLine[] }) {
+  if (!lines.length) return null
+  return (
+    <ul className="grid gap-2 text-sm">
+      {lines.map((l, i) => {
+        const I = Icon[l.icon]
+        return (
+          <li key={i} className="flex gap-2">
+            <I size={18} weight="fill" className={`mt-px shrink-0 ${tone[l.icon]}`} aria-hidden />
+            <span className="num">{l.text}</span>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

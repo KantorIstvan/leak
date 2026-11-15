@@ -135,7 +135,7 @@ function Credit() {
 }
 
 /** A link out of the app. The desktop webview opens no new windows, so there it goes to the system browser. */
-function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+export function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
   const open = (e: MouseEvent<HTMLAnchorElement>) => {
     if (!desktop) return
     e.preventDefault()
@@ -311,7 +311,7 @@ const split = (a: number, b: number): Record<Bucket, number> => ({ needs: a, wan
 const same = (x: Record<Bucket, number>, y: Record<Bucket, number>) => BUCKETS.every((b) => x[b] === y[b])
 
 /** One bar split into the three buckets by two draggable cuts, so the parts always add up to 100. */
-function Ratios() {
+export function Ratios() {
   const { t, s, money } = useApp()
   const income = useMonthlyIncome()
   const [r, setR] = useState(s.ratios)

@@ -13,7 +13,7 @@ import { Button, Card, CatIcon, Sheet, useApp } from './ui'
 type Group = keyof Dict['cmdGroups']
 const GROUP: Record<CommandId, Group> = {
   add: 'edit', undo: 'edit', redo: 'edit',
-  goMonth: 'go', goYear: 'go', goSubs: 'go', goGoals: 'go', goCategories: 'go', goSettings: 'go', prev: 'go', next: 'go', today: 'go',
+  goMonth: 'go', goYear: 'go', goSubs: 'go', goGoals: 'go', goCategories: 'go', goSettings: 'go', goHelp: 'go', prev: 'go', next: 'go', today: 'go',
   sidebar: 'view', theme: 'view', lang: 'view', colorblind: 'view',
   palette: 'app', help: 'app',
 }
@@ -44,7 +44,7 @@ export function Keys({ binding, className = '' }: { binding: string; className?:
   )
 }
 
-type Page = 'month' | 'year' | 'subs' | 'goals' | 'categories' | 'settings'
+type Page = 'month' | 'year' | 'subs' | 'goals' | 'categories' | 'settings' | 'help'
 
 interface Item {
   key: string
@@ -110,6 +110,7 @@ export function Commands(p: {
     goGoals: () => p.go('goals'),
     goCategories: () => p.go('categories'),
     goSettings: () => p.go('settings'),
+    goHelp: () => p.go('help'),
     prev: periodic ? () => shift(-1) : null,
     next: periodic ? () => shift(1) : null,
     today: periodic ? () => (p.page === 'year' ? p.setYear(new Date().getFullYear()) : p.setMonth(monthOf(today()))) : null,

@@ -174,6 +174,9 @@ export function withRatioChange(current: Record<Bucket, number>, history: RatioP
 
 export type Tier = 'healthy' | 'coping' | 'vulnerable'
 
+/** The FinHealth Score's bands: 80–100 healthy, 40–79 coping, 0–39 vulnerable. */
+export const tierOf = (score: number): Tier => (score >= 80 ? 'healthy' : score >= 40 ? 'coping' : 'vulnerable')
+
 /**
  * What a month put into investments out of what it earned: what went in minus what was taken out, and no more than
  * needs and wants left over, as investing older savings is not this month's saving.
@@ -206,7 +209,7 @@ export function monthScore(s: Summary, ratios: Record<Bucket, number>): { score:
   // FinHealth's "spending about equal to income" = 50; keeping a fifth (the 50/30/20 savings share) = 100.
   const balance = Math.max(0, Math.min(100, 50 + 250 * rate))
   const score = Math.round((plan + balance) / 2)
-  return { score, tier: score >= 80 ? 'healthy' : score >= 40 ? 'coping' : 'vulnerable', rate }
+  return { score, tier: tierOf(score), rate }
 }
 
 export type Insight = { weight: number } & (

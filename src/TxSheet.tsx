@@ -27,16 +27,21 @@ function useQuote(from: string, to: string, day: string) {
   return from === to ? null : got?.key === key ? got.quote : 'loading'
 }
 
-export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: string; onDone: () => void }) {
+/**
+ * Add (no `tx`) or edit a transaction. `draft` fills a new one in without making it an edit: the Help page shows the
+ * form this way, as an example entry.
+ */
+export function TxForm({ tx, draft, defaultDate, onDone }: { tx?: Tx; draft?: Pick<Tx, 'kind' | 'amount' | 'categoryId' | 'bucket' | 'note'>; defaultDate: string; onDone: () => void }) {
   const { t, s, cat, money } = useApp()
+  const start = tx ?? draft
   const paid = tx?.origCurrency && tx.origAmount ? { currency: tx.origCurrency, amount: tx.origAmount } : null // what a foreign tx cost in its currency
-  const [kind, setKind] = useState<Kind>(tx?.kind ?? 'expense')
+  const [kind, setKind] = useState<Kind>(start?.kind ?? 'expense')
   const [currency, setCurrency] = useState(paid?.currency ?? s.currency)
-  const [amount, setAmount] = useState(tx ? toInput(paid?.amount ?? tx.amount) : '')
+  const [amount, setAmount] = useState(start ? toInput(paid?.amount ?? start.amount) : '')
   const rateText = (r: number) => new Intl.NumberFormat(t.locale, { maximumSignificantDigits: 6, useGrouping: false }).format(r)
   // A rate typed by hand (or the one a saved foreign tx was converted at); null follows the day's published rate.
   const [ownRate, setOwnRate] = useState<string | null>(paid ? rateText(tx!.amount / paid.amount) : null)
-  const [note, setNote] = useState(tx?.note ?? '')
+  const [note, setNote] = useState(start?.note ?? '')
   const [tags, setTags] = useState<string[]>(tx?.tags ?? [])
   const [tagText, setTagText] = useState('')
   const [date, setDate] = useState(tx?.date ?? defaultDate)
@@ -46,10 +51,10 @@ export function TxForm({ tx, defaultDate, onDone }: { tx?: Tx; defaultDate: stri
   const effRate = ownRate === null ? dayRate : parseRate(ownRate)
   const minorNow = parseAmount(amount)
   const preview = foreign && minorNow && effRate ? convert(minorNow, effRate) : null
-  const [categoryId, setCategoryId] = useState<string | null>(tx?.categoryId ?? null)
-  const [bucket, setBucket] = useState<Bucket>(tx?.bucket ?? 'needs')
+  const [categoryId, setCategoryId] = useState<string | null>(start?.categoryId ?? null)
+  const [bucket, setBucket] = useState<Bucket>(start?.bucket ?? 'needs')
   // The bucket follows the category's default; the picker only shows for exceptions.
-  const [customBucket, setCustomBucket] = useState(!!tx?.bucket && tx.bucket !== cat.get(tx.categoryId)?.bucket)
+  const [customBucket, setCustomBucket] = useState(!!start?.bucket && start.bucket !== cat.get(start.categoryId)?.bucket)
   const [errors, setErrors] = useState<{ amount?: string; category?: string; rate?: string }>({})
   // Earlier notes complete the description inline: the rest shows faded after the caret, Tab takes it.
   // ponytail: reads every tx per open form, fine for a personal ledger; aggregate notes if it ever lags

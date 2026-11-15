@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src-tauri/icons/128x128@2x.png" width="88" alt="Leak icon">
+<img src="src-tauri/icons/128x128@2x.png" width="100" alt="Leak icon">
 
 # Leak
 
@@ -112,7 +112,8 @@ delete.
 
 - Syncs across devices after signing in
 - Notes, names and amounts are encrypted on your device before upload
-- A year story: a full-screen walk through what the year came to, offered from 20 December
+- A year story: a full-screen walk through what the year came to, offered in a pop-up from 20 December
+- A built-in Help page: a step-by-step guide with pictures and a searchable FAQ
 - The last synced data stays readable offline
 - Search, filters and bulk edit for transactions
 - CSV import and export, also from other apps
@@ -186,6 +187,7 @@ npm run dev          # web version at http://localhost:5173
 npm run tauri dev    # desktop app
 npm run tauri build  # installer in src-tauri/target/release/bundle
 npm test             # unit tests
+npm run help-shots   # the Help page's screenshots, in every language and theme (needs Chrome)
 ```
 
 > [!TIP]
@@ -224,12 +226,14 @@ src/
 ├── lib.ts          money parsing/formatting, monthly and yearly summaries (tested in lib.test.ts)
 ├── csv.ts          CSV import and export
 ├── i18n.ts         Hungarian and English strings
+├── help.ts         the Help page's guide and questions, in both languages
 ├── ui.tsx          shared components
 ├── TxSheet.tsx     add / edit transaction form
 ├── TxBrowser.tsx   transaction list with search, filters and bulk edit
-└── pages/          Month, Year, Subscriptions, Goals, Categories, Settings
+└── pages/          Month, Year, Subscriptions, Goals, Categories, Settings, Help
 src-tauri/          desktop shell (Rust)
 supabase/           database schema
+scripts/help-shots/ the Help page's screenshots (npm run help-shots)
 docs/screenshots/   README images
 ```
 

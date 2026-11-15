@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { ClerkFailed, useAuth } from '@clerk/react'
-import { ArrowsClockwise, CalendarBlank, CaretRight, ChartBar, CloudSlash, DotsThree, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
+import { ArrowsClockwise, CalendarBlank, CaretRight, ChartBar, CloudSlash, DotsThree, Drop, GearSix, GithubLogo, GoogleLogo, MagnifyingGlass, Plus, Question, SidebarSimple, Tag, Target, type Icon } from '@phosphor-icons/react'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { EmailSignIn, UserButton } from './Auth'
 import { clerk, desktop, finishSso, startSso } from './clerk'
@@ -13,18 +13,19 @@ import { dicts } from './i18n'
 import { formatMoney, monthOf, ssoReturn, today } from './lib'
 import { TxForm } from './TxSheet'
 import { Button, Ctx, Sheet, type AppCtx } from './ui'
-import { Sparkle } from '@phosphor-icons/react'
 import { MonthPage } from './pages/Month'
 import { YearPage } from './pages/Year'
 import { YearStory } from './pages/Story'
+import { StoryOffer } from './StoryOffer'
 import { markStorySeen, storyDue, storySeen } from './story'
 import { GoalsPage } from './pages/Goals'
 import { CategoriesPage } from './pages/Categories'
 import { SettingsPage } from './pages/Settings'
+import { HelpPage } from './pages/Help'
 import { Updater } from './Updater'
 import { SubsPage } from './pages/Subs'
 
-type Page = 'month' | 'year' | 'subs' | 'goals' | 'categories' | 'settings'
+type Page = 'month' | 'year' | 'subs' | 'goals' | 'categories' | 'settings' | 'help'
 const NAV: { id: Page; icon: Icon }[] = [
   { id: 'month', icon: CalendarBlank },
   { id: 'year', icon: ChartBar },
@@ -32,11 +33,12 @@ const NAV: { id: Page; icon: Icon }[] = [
   { id: 'goals', icon: Target },
   { id: 'categories', icon: Tag },
   { id: 'settings', icon: GearSix },
+  { id: 'help', icon: Question },
 ]
 
 // Phones: a tab bar holds five things at most, so three pages and the add button get a slot and the rest sit behind More.
 const TABS: Page[] = ['month', 'year', 'subs']
-const MORE: Page[] = ['goals', 'categories', 'settings']
+const MORE: Page[] = ['goals', 'categories', 'settings', 'help']
 const icon = (id: Page) => NAV.find((n) => n.id === id)!.icon
 
 /** One slot of the phone tab bar: 56px tall, a rule on top of the current one. */
@@ -133,6 +135,12 @@ function SideItem({ icon: I, label, on, collapsed, onClick }: { icon: Icon; labe
 }
 
 const reload = () => location.reload()
+
+/** The year whose story is due and not yet offered on this device, or null. */
+const dueOffer = () => {
+  const due = storyDue()
+  return due && due > storySeen() ? due : null
+}
 
 export default function App() {
   const { isLoaded, isSignedIn, getToken } = useAuth()
@@ -303,12 +311,25 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
   const [collapsed, toggleSidebar] = useCollapsed()
   const [palette, setPalette] = useState(false)
   const [more, setMore] = useState(false)
-  // The year story: the year open as a full-screen overlay, and the year-end offer (from 20 December, through January).
+  // The year story: the year open as a full-screen overlay, and the year-end offer as a modal (from 20 December, through January).
   const [story, setStory] = useState<number | null>(null)
-  const [offer, setOffer] = useState(() => {
-    const due = storyDue()
-    return due && due > storySeen() ? due : null
-  })
+  const [offer, setOffer] = useState(dueOffer)
+  // A desktop app stays open for days: look again whenever the window comes back, so 20 December is not missed. Not
+  // over another dialog (a half-filled entry): the offer waits for the next time the window comes back.
+  useEffect(() => {
+    const check = () => setOffer((o) => o ?? (document.querySelector('dialog[open]') ? null : dueOffer()))
+    addEventListener('focus', check)
+    return () => removeEventListener('focus', check)
+  }, [])
+  // Opening the story of the year that is due counts as seeing it, so the offer does not come back for it. Before
+  // 20 December the running year's story is still unfinished: opening it then leaves the year-end offer to come.
+  const openStory = (y: number) => {
+    if (y === storyDue()) {
+      markStorySeen(y)
+      setOffer(null)
+    }
+    setStory(y)
+  }
   useTheme(settings?.theme)
   // On focus, fetch what other devices changed meanwhile, then charge subscriptions in case the app stayed open past
   // a charge day (App did both on start). Offline this fails quietly: the banner says so, and an alert would refocus
@@ -375,7 +396,7 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
             {!collapsed && <span className="font-display text-2xl font-medium tracking-tight whitespace-nowrap [text-box:trim-both_cap_alphabetic]">Leak</span>}
           </div>
           <nav className="grid gap-0.5">
-            {NAV.filter((n) => n.id !== 'settings').map(({ id, icon }) => (
+            {NAV.filter((n) => n.id !== 'settings' && n.id !== 'help').map(({ id, icon }) => (
               <SideItem key={id} icon={icon} label={t.nav[id]} on={page === id} collapsed={collapsed} onClick={() => go(id)} />
             ))}
           </nav>
@@ -392,6 +413,7 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
               {!collapsed && <span className="overflow-hidden">{t.addTx}</span>}
             </Button>
             <SideItem icon={MagnifyingGlass} label={t.paletteHint} collapsed={collapsed} onClick={() => setPalette(true)} />
+            <SideItem icon={Question} label={t.nav.help} on={page === 'help'} collapsed={collapsed} onClick={() => go('help')} />
             <SideItem icon={SidebarSimple} label={collapsed ? t.expandSidebar : t.collapseSidebar} collapsed={collapsed} onClick={toggleSidebar} />
             {/* Settings live in the account menu; without an account (Clerk down) they keep their own item. */}
             <div className="mt-2 border-t border-line pt-2">
@@ -421,47 +443,29 @@ function Main({ clerkDown = false }: { clerkDown?: boolean }) {
               </Button>
             </div>
           )}
-          {offer && (
-            <div role="status" className="anim-fade mx-auto mb-6 flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 border-t-2 border-ink py-3 max-md:mt-3 max-md:mb-2">
-              <Sparkle size={18} weight="fill" className="shrink-0" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <span className="font-medium">{t.story.ready(offer)}</span> <span className="text-zinc-600 dark:text-zinc-400">{t.story.readyHint}</span>
-              </span>
-              <span className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  className="h-8 px-3"
-                  onClick={() => {
-                    markStorySeen(offer)
-                    setOffer(null)
-                  }}
-                >
-                  {t.story.later}
-                </Button>
-                <Button
-                  className="h-8 px-3"
-                  onClick={() => {
-                    setOffer(null)
-                    setStory(offer)
-                  }}
-                >
-                  {t.story.open}
-                </Button>
-              </span>
-            </div>
-          )}
           <div key={page} className="anim-fade-up mx-auto max-w-6xl">
             {page === 'month' && <MonthPage month={month} setMonth={setMonth} onAdd={add} onEdit={setEditing} />}
-            {page === 'year' && <YearPage year={year} setYear={setYear} openMonth={openMonth} openStory={() => setStory(year)} />}
+            {page === 'year' && <YearPage year={year} setYear={setYear} openMonth={openMonth} openStory={() => openStory(year)} />}
             {page === 'subs' && <SubsPage />}
             {page === 'goals' && <GoalsPage />}
             {page === 'categories' && <CategoriesPage />}
             {page === 'settings' && <SettingsPage />}
+            {page === 'help' && <HelpPage go={go} onAdd={add} />}
           </div>
         </main>
       </div>
 
       {story !== null && <YearStory year={story} onClose={() => setStory(null)} />}
+      {offer !== null && story === null && (
+        <StoryOffer
+          year={offer}
+          onLater={() => {
+            markStorySeen(offer)
+            setOffer(null)
+          }}
+          onOpen={() => openStory(offer)}
+        />
+      )}
 
       {/* Phones: the tab bar. Three pages, the add button in the middle where the thumb rests, and More for the rest. */}
       <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-ink bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">

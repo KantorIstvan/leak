@@ -4,7 +4,7 @@
 
 export const COMMANDS = [
   'palette', 'help', 'add', 'undo', 'redo',
-  'goMonth', 'goYear', 'goSubs', 'goGoals', 'goCategories', 'goSettings',
+  'goMonth', 'goYear', 'goSubs', 'goGoals', 'goCategories', 'goSettings', 'goHelp',
   'prev', 'next', 'today',
   'sidebar', 'theme', 'lang', 'colorblind',
 ] as const
@@ -23,6 +23,7 @@ export const DEFAULT_KEYS: Keymap = {
   goGoals: ['G G'],
   goCategories: ['G C'],
   goSettings: ['Mod+,'],
+  goHelp: ['G H'],
   prev: ['ArrowLeft'],
   next: ['ArrowRight'],
   today: ['T'],

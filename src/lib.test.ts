@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Category, Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, hitTarget, earned, investedOf, savingsIncome, parseAmount, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, hitTarget, earned, investedOf, savingsIncome, parseAmount, tierOf, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -239,6 +239,12 @@ describe('money out of savings', () => {
   it('names the income categories marked as it', () => {
     const cats = [{ id: 'job', kind: 'income', bucket: 'needs' }, { id: 'sold', kind: 'income', bucket: 'investments' }, { id: 'etf', kind: 'expense', bucket: 'investments' }] as Category[]
     expect([...savingsIncome(cats)]).toEqual(['sold'])
+  })
+})
+
+describe('tierOf', () => {
+  it('puts the band edges where the FinHealth Score does', () => {
+    expect([0, 39, 39.6, 40, 79, 80, 100].map(tierOf)).toEqual(['vulnerable', 'vulnerable', 'vulnerable', 'coping', 'coping', 'healthy', 'healthy'])
   })
 })
 

@@ -3,7 +3,7 @@ import type { CommandId } from './keys'
 
 const en = {
   locale: 'en-US',
-  nav: { month: 'Month', year: 'Year', subs: 'Subscriptions', goals: 'Goals', categories: 'Categories', settings: 'Settings' },
+  nav: { month: 'Month', year: 'Year', subs: 'Subscriptions', goals: 'Goals', categories: 'Categories', settings: 'Settings', help: 'Help' },
   bucket: { needs: 'Needs', wants: 'Wants', investments: 'Investments' },
   kind: { expense: 'Expense', income: 'Income' },
   income: 'Income',
@@ -172,6 +172,7 @@ const en = {
     goGoals: 'Go to Goals',
     goCategories: 'Go to Categories',
     goSettings: 'Go to Settings',
+    goHelp: 'Go to Help',
     prev: 'Previous month or year',
     next: 'Next month or year',
     today: 'Back to the current month or year',
@@ -356,6 +357,7 @@ const en = {
     open: 'The year’s story',
     ready: (year: number) => `Your ${year} is ready.`,
     readyHint: 'Twelve months of your money, told scene by scene.',
+    readyLater: 'It stays on the Year page, so you can open it any time.',
     later: 'Later',
     back: 'Back to the year',
     close: 'Close the story',
@@ -435,7 +437,7 @@ export type Dict = typeof en
 
 const hu: Dict = {
   locale: 'hu-HU',
-  nav: { month: 'Hónap', year: 'Év', subs: 'Előfizetések', goals: 'Célok', categories: 'Kategóriák', settings: 'Beállítások' },
+  nav: { month: 'Hónap', year: 'Év', subs: 'Előfizetések', goals: 'Célok', categories: 'Kategóriák', settings: 'Beállítások', help: 'Súgó' },
   bucket: { needs: 'Szükséglet', wants: 'Vágy', investments: 'Befektetés' },
   kind: { expense: 'Kiadás', income: 'Bevétel' },
   income: 'Bevétel',
@@ -603,6 +605,7 @@ const hu: Dict = {
     goGoals: 'Ugrás: Célok',
     goCategories: 'Ugrás: Kategóriák',
     goSettings: 'Ugrás: Beállítások',
+    goHelp: 'Ugrás: Súgó',
     prev: 'Előző hónap vagy év',
     next: 'Következő hónap vagy év',
     today: 'Vissza az aktuális hónapra vagy évre',
@@ -785,6 +788,7 @@ const hu: Dict = {
     open: 'Az év története',
     ready: (year) => `A ${year}-ös éved elkészült.`,
     readyHint: 'Tizenkét hónap a pénzedről, jelenetről jelenetre.',
+    readyLater: 'Az Év oldalon bármikor megnyithatod.',
     later: 'Később',
     back: 'Vissza az évhez',
     close: 'Történet bezárása',
