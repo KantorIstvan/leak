@@ -1,9 +1,7 @@
 // What a year came to, in enough detail for the year story (pages/Story.tsx): every part is optional and its
 // scene is skipped when the data is not there. Pure functions, tested in story.test.ts.
 import type { Bucket, Category, Goal, Sub, Tx } from './db'
-import { byMonth, earned, fold, hitTarget, monthScore, summarize, tagTotals, today } from './lib'
-
-const isSpending = (t: Tx) => t.kind === 'expense' && t.bucket !== 'investments'
+import { byMonth, earned, fold, hitTarget, isSpending, monthScore, summarize, tagTotals, today } from './lib'
 
 export interface StoryMonth {
   income: number

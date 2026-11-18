@@ -52,13 +52,12 @@ describe('csv', () => {
 
   it('exports notes and categories that look like formulas as text, and reads them back as they were', () => {
     const name = (id: string) => (id === 'odd' ? '+36 phone' : catName(id))
-    const csv = toCsv([tx({ note: '=HYPERLINK("http://x","click")' }), tx({ id: '1', categoryId: 'odd', note: '@SUM(A1)' }), tx({ id: '2', note: '-5% off' })], name)
-    expect(csv).not.toMatch(/(^|,)"?[=+\-@]/m) // no cell a spreadsheet would evaluate
-    expect(readCsv(csv, 'U')!.rows.map((r) => [r.category, r.note])).toEqual([
-      ['Food', '=HYPERLINK("http://x","click")'],
-      ['+36 phone', '@SUM(A1)'],
-      ['Food', '-5% off'],
-    ])
+    const notes = ['=HYPERLINK("http://x","click")', '@SUM(A1)', '-5% off', 'Lidl;=1+1', 'two\n=1+1', 'three\r\n+1']
+    const csv = toCsv(notes.map((note, i) => tx({ id: String(i), note, categoryId: i === 1 ? 'odd' : 'food' })), name)
+    // No cell a spreadsheet would evaluate, also where Excel set to ; as list separator (Hungarian) cuts a line:
+    // at every ; and line break, quoted or not.
+    expect(csv).not.toMatch(/(^|[,;])"?[=+\-@]/m)
+    expect(readCsv(csv, 'U')!.rows.map((r) => [r.category, r.note])).toEqual(notes.map((note, i) => [i === 1 ? '+36 phone' : 'Food', note]))
   })
 
   it('keeps newlines inside quotes', () => {

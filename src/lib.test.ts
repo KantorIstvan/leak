@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Category, Tx } from './db'
-import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, yearRecap, monthScore, hitTarget, earned, investedOf, savingsIncome, parseAmount, tierOf, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
+import { avgMonthlyIncome, byMonth, currencySymbol, dueDates, EMPTY_QUERY, formatMoney, groupAmount, hexToHsv, hsvToHex, insights, isDay, reviewDue, cleanTag, tagTotals, monthScore, hitTarget, earned, investedOf, savingsIncome, parseAmount, tierOf, plan, ratiosFor, withRatioChange, queryTxs, shiftMonth, ssoReturn, suggestNote, summarize, tint, type TxQuery } from './lib'
 
 const tx = (p: Partial<Tx>): Tx => ({ id: '0', date: '2026-08-01', amount: 0, kind: 'expense', categoryId: '1', bucket: 'needs', note: '', ...p })
 
@@ -412,31 +412,5 @@ describe('subscription watch', () => {
     expect(reviewDue(null, '2026-10', true)).toBe(true)
     expect(reviewDue('2025-11', '2026-10', true)).toBe(false)
     expect(reviewDue('2025-10', '2026-10', false)).toBe(true)
-  })
-})
-
-describe('yearRecap', () => {
-  const tx = (date: string, amount: number, kind: Tx['kind'], categoryId: string, note = '', bucket: Tx['bucket'] = 'needs'): Tx => ({
-    id: `${date}${amount}${note}${categoryId}`, date, amount, kind, categoryId, bucket: kind === 'income' ? null : bucket, note,
-  })
-  const ratios = () => ({ needs: 50, wants: 30, investments: 20 })
-  it('sums the year: saving, months on target, top category, regular purchase, top tag', () => {
-    const txs = [
-      tx('2026-01-05', 1000, 'income', 'job'),
-      tx('2026-01-06', 500, 'expense', 'rent'),
-      tx('2026-01-07', 200, 'expense', 'etf', '', 'investments'),
-      tx('2026-02-05', 1000, 'income', 'job'),
-      tx('2026-02-06', 900, 'expense', 'rent'),
-      ...['01', '02', '03'].map((m) => tx(`2026-${m}-10`, 10, 'expense', 'food', m === '02' ? 'lidl' : 'Lidl', 'wants')),
-      { ...tx('2026-03-11', 70, 'expense', 'travel', 'Hotel', 'wants'), tags: ['trip'] },
-      tx('2025-12-31', 99999, 'expense', 'rent'), // another year: byMonth skips it, the caller passes one year
-    ].filter((t) => t.date.startsWith('2026'))
-    const r = yearRecap(txs, 2026, ratios)
-    expect(r.income).toBe(2000)
-    expect(r.saved).toBe(2000 - 1400 - 100)
-    expect([r.hit, r.counted]).toEqual([1, 2]) // January invested its 20%; February spent 90% on rent
-    expect(r.top).toEqual({ id: 'rent', amount: 1400, share: 1400 / 1500 }) // of spending: investing is not part of it
-    expect(r.regular).toEqual({ note: 'Lidl', count: 3, amount: 30 })
-    expect(r.tag).toEqual({ tag: 'trip', amount: 70, count: 1 })
   })
 })

@@ -209,7 +209,9 @@ function SubForm({ sub, onDone }: { sub?: Sub; onDone: () => void }) {
       if (sub) await update('subs', [sub.id], data)
       // A new subscription is charged starting this month, once its day has come.
       else await add('subs', [{ ...data, lastMonth: shiftMonth(monthOf(today()), -1) }])
-      await syncSubs()
+      // Saved either way: a charge that fails now (no exchange rate yet) is made by a later sync, and an error here
+      // would leave the form open over a saved subscription, where Save again makes a second one.
+      await syncSubs().catch(console.error)
     })
     onDone()
   }

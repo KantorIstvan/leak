@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { hasSealed, isPlain, isSealed, open, seal, setKeyStore, unlock, type KeyStore } from './crypt'
+import { hasSealed, isSealed, needsSealing, open, seal, setKeyStore, unlock, type KeyStore } from './crypt'
 
 let saved: string | undefined
 const store: KeyStore = { read: async () => saved, write: async (k) => void (saved = k) }
+
+// A value as versions before padding sealed it.
+const sealUnpadded = async (v: unknown) => {
+  const k = await crypto.subtle.importKey('raw', Uint8Array.from(atob(saved!), (c) => c.charCodeAt(0)), 'AES-GCM', false, ['encrypt'])
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(v))))
+  return 'e1:' + btoa(String.fromCharCode(...iv, ...ct))
+}
 
 beforeEach(() => {
   saved = undefined
@@ -41,6 +49,21 @@ describe('seal and open', () => {
     expect(await open('settings', { lang: 'hu' })).toEqual({ lang: 'hu' })
   })
 
+  it('pads values, so a ciphertext’s length tells neither how many digits an amount has nor how long a name is', async () => {
+    await unlock(true)
+    const length = async (table: string, row: Record<string, unknown>) => (Object.values(await seal(table, row))[0] as string).length
+    expect(await length('txs', { amount: 1 })).toBe(await length('txs', { amount: 35000000 }))
+    expect(await length('categories', { name: 'Health' })).toBe(await length('categories', { name: 'Sold investments' }))
+  })
+
+  it('seals a category’s icon and color, which say what the category is as plainly as its name', async () => {
+    await unlock(true)
+    const row = { id: 'c', name: 'Alcohol', color: '#be123c', icon: 'BeerStein', kind: 'expense', bucket: 'wants' }
+    const out = await seal('categories', row)
+    expect(isSealed(out.icon) && isSealed(out.color)).toBe(true)
+    expect(await open('categories', out)).toEqual(row)
+  })
+
   it('refuses ciphertext made with another key', async () => {
     await unlock(true)
     const out = await seal('subs', { name: 'Spotify' })
@@ -68,15 +91,22 @@ describe('unlock', () => {
   })
 })
 
-describe('plain and sealed rows', () => {
+describe('rows to seal again', () => {
   it('tells rows still in the clear from sealed ones', async () => {
     await unlock(true)
     const plain = { id: 'g', name: 'Car', target: 100, saved: 0 }
     const sealed = await seal('goals', plain)
-    expect(isPlain('goals', plain)).toBe(true)
+    expect(needsSealing('goals', plain)).toBe(true)
     expect(hasSealed('goals', plain)).toBe(false)
-    expect(isPlain('goals', sealed)).toBe(false)
+    expect(needsSealing('goals', sealed)).toBe(false)
     expect(hasSealed('goals', sealed)).toBe(true)
-    expect(isPlain('txs', { note: (await seal('txs', { note: 'a' })).note, amount: 5, tags: null })).toBe(true)
+    expect(needsSealing('txs', { note: (await seal('txs', { note: 'a' })).note, amount: 5, tags: null })).toBe(true)
+  })
+
+  it('reads a value an older version sealed without padding, and wants it sealed again', async () => {
+    await unlock(true)
+    const old = { name: await sealUnpadded('Car') }
+    expect(await open('goals', old)).toEqual({ name: 'Car' })
+    expect(needsSealing('goals', old)).toBe(true)
   })
 })

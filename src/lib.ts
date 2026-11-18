@@ -138,7 +138,7 @@ export function summarize(txs: Tx[], fromSavings?: ReadonlySet<string>): Summary
 export const earned = (s: Summary) => s.income - s.withdrawn
 
 /** Spending is needs and wants: money put into investments is kept, not spent. */
-const isSpending = (t: Tx) => t.kind === 'expense' && t.bucket !== 'investments'
+export const isSpending = (t: Tx) => t.kind === 'expense' && t.bucket !== 'investments'
 
 export interface BucketPlan {
   bucket: Bucket
@@ -484,55 +484,6 @@ export function tagTotals(txs: Tx[]) {
 /** A subscription is up for "still using it?" a year after it was last confirmed, or after a year of charges if never. */
 export const reviewDue = (reviewed: string | null | undefined, month: string, chargedYearAgo: boolean) =>
   reviewed ? reviewed <= shiftMonth(month, -12) : chargedYearAgo
-
-// --- Year recap -----------------------------------------------------------
-
-export interface Recap {
-  income: number // earned, as the score counts it
-  saved: number // of it, what needs and wants left
-  hit: number // months that invested their target share (hitTarget)
-  counted: number // months with income
-  top?: { id: string; amount: number; share: number } // the category spent on most, with its share of the spending
-  regular?: { note: string; count: number; amount: number } // the expense logged most often
-  tag?: { tag: string; amount: number; count: number }
-}
-
-/** What a year came to, for the recap on the year page. */
-export function yearRecap(txs: Tx[], year: number, ratiosAt: (month: string) => Record<Bucket, number>, fromSavings?: ReadonlySet<string>): Recap {
-  const months = byMonth(txs, year, fromSavings)
-  const sum = summarize(txs, fromSavings)
-  const spending = sum.buckets.needs + sum.buckets.wants
-  const key = (i: number) => `${year}-${String(i + 1).padStart(2, '0')}`
-  const withIncome = months.map((s, i) => [s, key(i)] as const).filter(([s]) => earned(s) > 0)
-  const hit = withIncome.filter(([s, m]) => hitTarget(s, ratiosAt(m))).length
-
-  const spent = txs.filter(isSpending)
-  const cats = new Map<string, number>()
-  for (const t of spent) cats.set(t.categoryId, (cats.get(t.categoryId) ?? 0) + t.amount)
-  const [topId, topAmount] = [...cats].sort((a, b) => b[1] - a[1])[0] ?? []
-
-  // Notes compared folded, shown as last written: "lidl" and "Lidl" are the same shop.
-  const notes = new Map<string, { note: string; count: number; amount: number }>()
-  for (const t of spent) {
-    const k = fold(t.note.trim())
-    if (!k) continue
-    const n = notes.get(k) ?? notes.set(k, { note: '', count: 0, amount: 0 }).get(k)!
-    n.note = t.note.trim()
-    n.count++
-    n.amount += t.amount
-  }
-  const regular = [...notes.values()].sort((a, b) => b.count - a.count || b.amount - a.amount)[0]
-
-  return {
-    income: earned(sum),
-    saved: earned(sum) - spending,
-    hit,
-    counted: withIncome.length,
-    top: topId === undefined ? undefined : { id: topId, amount: topAmount, share: topAmount / spending },
-    regular: regular && regular.count >= 3 ? regular : undefined,
-    tag: tagTotals(txs).find((x) => x.amount > 0),
-  }
-}
 
 /**
  * Inline completion for the description field: the most used earlier note of this kind that

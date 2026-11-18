@@ -3,7 +3,7 @@
 import { createClient } from '@supabase/supabase-js'
 import Dexie from 'dexie'
 import { BUCKETS, db, DEFAULT_SETTINGS, emptyBackup, legacyBackup, mirrorBackup, rekey, type Backup, type Settings, type Sub, type Tx } from './db'
-import { hasSealed, isPlain, open as unseal, seal, setKeyStore, unlock } from './crypt'
+import { hasSealed, needsSealing, open as unseal, seal, setKeyStore, unlock } from './crypt'
 import { convert, rate } from './fx'
 import { dueDates, monthOf, today, withRatioChange } from './lib'
 
@@ -329,6 +329,7 @@ let started = 0 // pulls started
 let applied = 0 // the newest pull mirrored so far: an older one that finishes later must not roll the mirror back
 let replacing = false
 let leaving = false // the account is being deleted: nothing may fill it again
+let missingSince = 0 // when the current wait for an account's missing settings began (see pull); 0 while it has them
 
 /**
  * Brings the mirror in line with the server: picks up edits made on other devices. Only rows that differ are
@@ -347,9 +348,19 @@ export async function pull() {
     const [categories, txs, goals, subs, settings] = await Promise.all(raw.map((rows, i) => Promise.all(rows.map(async (r) => fromRow(await unseal(names[i], r))))))
     // No settings: a new account, or a replace that stopped halfway (see replaceAll). Neither is mirrored.
     if (!settings.length) {
-      if (!replacing && !leaving) await setUp()
+      // A replace running on another device deletes the settings first: a device that holds data puts its copy back
+      // only once they have stayed missing for a minute, so it does not wipe that replace halfway, and looks again by
+      // itself then. A sighting over a minute and a half old says nothing about the time since (the settings may have
+      // come back and gone again), so the minute starts over. A device without data sets the account up now.
+      const waited = Date.now() - missingSince
+      const fresh = waited < 0 || waited > 90_000
+      if (fresh) missingSince = Date.now()
+      if (replacing || leaving) return
+      if (!(await db.settings.count()) || (!fresh && waited > 60_000)) await setUp()
+      else if (fresh) setTimeout(() => void refresh().catch(console.error), 61_000)
       return
     }
+    missingSince = 0
     // A replace running meanwhile may show up half done in this snapshot; it mirrors its own result when finished.
     if (replacing || n < applied) return
     applied = n
@@ -363,11 +374,12 @@ export async function pull() {
         }),
       ),
     )
-    // Rows saved before encryption, or by an older version, are sealed in place. Ones written here since the fetch
-    // went out sealed already, and must not be overwritten with the older copy.
+    // Rows saved before encryption, or sealed by an older version (unpadded, or with a column it left in the clear),
+    // are sealed again in place. Ones written here since the fetch went out sealed already, and must not be
+    // overwritten with the older copy.
     for (const [i, t] of TABLES.entries()) {
-      const plain = raw[i].filter((r) => isPlain(t, r) && !written.has(`${t}/${r.id}`))
-      for (const c of chunks(plain, 500)) ok(await sb.from(t).upsert(await Promise.all(c.map(async (r) => seal(t, await unseal(t, r))))))
+      const stale = raw[i].filter((r) => needsSealing(t, r) && !written.has(`${t}/${r.id}`))
+      for (const c of chunks(stale, 500)) ok(await sb.from(t).upsert(await Promise.all(c.map(async (r) => seal(t, await unseal(t, r))))))
     }
   } finally {
     pulling.delete(written)
@@ -394,7 +406,7 @@ async function setUp() {
 
 /** Replaces all of the user's server data with an already rekeyed backup, then mirrors it. */
 // ponytail: not atomic. Settings go first and come back last, so a replace that fails midway leaves an account
-// without them: pulls then keep this device's copy and the next one restores it (setUp).
+// without them: pulls then keep this device's copy, and put it back a minute later (setUp).
 export async function replaceAll(b: Backup) {
   if (replacing) throw new Error('A replace is already running')
   replacing = true
@@ -418,7 +430,7 @@ async function wipe() {
 
 /**
  * Erases the account's data just before Clerk deletes the account (clerk.ts), which only removes the user.
- * Should either step fail, the next launch puts this device's copy back (setUp), as after a replace that stopped.
+ * Should either step fail, a pull after the next launch puts this device's copy back (setUp), as after a replace that stopped.
  */
 export async function deleteAccountData() {
   leaving = true // a pull meanwhile (the window got focus) must not put this device's copy back
@@ -430,6 +442,7 @@ export const wipeAll = async () => replaceAll(rekey({ ...emptyBackup(), settings
 export const clearLocal = () => {
   clearHistory()
   setKeyStore(null)
+  leaving = false // signed out: no pull can refill a deleted account now, and the next account must be set up
   return Promise.all(db.tables.map((t) => t.clear()))
 }
 
@@ -443,39 +456,46 @@ export async function chargeId(subId: string, month: string) {
 /** Turns every subscription charge whose day has come into a real transaction. */
 export async function syncSubs() {
   const current = today()
+  const errors: unknown[] = []
   for (const local of await db.subs.toArray()) {
     if (!dueDates(local.lastMonth, current, local.day).length) continue
-    // Decided on the server's copy: this device's may be days old, and a charge deleted since must not come back.
-    const row = ok<Record<string, unknown> | null>(await sb.from('subs').select('*').eq('id', local.id).maybeSingle())
-    if (!row) continue // cancelled on another device
-    const sub = fromRow(await unseal('subs', row)) as unknown as Sub
-    const dates = dueDates(sub.lastMonth, current, sub.day)
-    if (!dates.length) continue // charged on another device; the next pull updates this one's copy
-    const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'
-    const base = ((await db.settings.get('app')) ?? DEFAULT_SETTINGS).currency
-    const foreign = sub.currency && sub.currency !== base ? sub.currency : null
-    const charges = await Promise.all(
-      dates.map(async (date): Promise<Tx> => ({
-        id: await chargeId(sub.id, monthOf(date)),
-        date,
-        // A foreign price is converted at its charge day's rate, as the bank would.
-        amount: foreign ? (convert(sub.amount, (await rate(foreign, base, date)).rate) ?? 1) : sub.amount,
-        ...(foreign && { origAmount: sub.amount, origCurrency: foreign }),
-        kind: 'expense',
-        categoryId: sub.categoryId,
-        bucket,
-        note: sub.name,
-        createdAt: Date.now(),
-      })),
-    )
-    // Charges before the month moves on: if this stops in between, the next run redoes it, and the fixed ids
-    // keep that (or another device doing the same) from charging twice.
-    const fresh = await addOnce('txs', charges)
-    const moved = { id: sub.id, before: { lastMonth: sub.lastMonth }, after: { lastMonth: monthOf(dates[dates.length - 1]) } }
-    await patch('subs', [sub.id], moved.after)
-    // Charges made by saving a subscription undo with it; the ones a sync makes on its own are not undoable.
-    if (open) open.ops.push({ t: 'add', table: 'txs', rows: fresh }, { t: 'update', table: 'subs', rows: [moved] })
+    // One subscription failing (no exchange rate for its currency, say) must not keep the others from being charged.
+    try {
+      // Decided on the server's copy: this device's may be days old, and a charge deleted since must not come back.
+      const row = ok<Record<string, unknown> | null>(await sb.from('subs').select('*').eq('id', local.id).maybeSingle())
+      if (!row) continue // cancelled on another device
+      const sub = fromRow(await unseal('subs', row)) as unknown as Sub
+      const dates = dueDates(sub.lastMonth, current, sub.day)
+      if (!dates.length) continue // charged on another device; the next pull updates this one's copy
+      const bucket = sub.bucket ?? (await db.categories.get(sub.categoryId))?.bucket ?? 'needs'
+      const base = ((await db.settings.get('app')) ?? DEFAULT_SETTINGS).currency
+      const foreign = sub.currency && sub.currency !== base ? sub.currency : null
+      const charges = await Promise.all(
+        dates.map(async (date): Promise<Tx> => ({
+          id: await chargeId(sub.id, monthOf(date)),
+          date,
+          // A foreign price is converted at its charge day's rate, as the bank would.
+          amount: foreign ? (convert(sub.amount, (await rate(foreign, base, date)).rate) ?? 1) : sub.amount,
+          ...(foreign && { origAmount: sub.amount, origCurrency: foreign }),
+          kind: 'expense',
+          categoryId: sub.categoryId,
+          bucket,
+          note: sub.name,
+          createdAt: Date.now(),
+        })),
+      )
+      // Charges before the month moves on: if this stops in between, the next run redoes it, and the fixed ids
+      // keep that (or another device doing the same) from charging twice.
+      const fresh = await addOnce('txs', charges)
+      const moved = { id: sub.id, before: { lastMonth: sub.lastMonth }, after: { lastMonth: monthOf(dates[dates.length - 1]) } }
+      await patch('subs', [sub.id], moved.after)
+      // Charges made by saving a subscription undo with it; the ones a sync makes on its own are not undoable.
+      if (open) open.ops.push({ t: 'add', table: 'txs', rows: fresh }, { t: 'update', table: 'subs', rows: [moved] })
+    } catch (e) {
+      errors.push(e)
+    }
   }
+  if (errors.length) throw errors[0] // still a failed sync: Main's banner shows it
 }
 
 // Whether the last sync failed: Main shows a banner while it did.

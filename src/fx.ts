@@ -29,7 +29,8 @@ const cache = new Map<string, Promise<Quote>>()
 export function rate(from: string, to: string, day = today()): Promise<Quote> {
   if (from === to) return Promise.resolve({ rate: 1, date: day })
   const date = day >= today() ? 'latest' : day
-  const key = `${date}|${from}|${to}`
+  // By the real day, not 'latest': the app stays open for days, and Monday's latest is no rate for Thursday.
+  const key = `${date === 'latest' ? today() : date}|${from}|${to}`
   let hit = cache.get(key)
   if (!hit) {
     hit = (async () => {

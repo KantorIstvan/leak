@@ -36,13 +36,15 @@ const BUCKET_NAMES: Record<string, Bucket> = {
   needs: 'needs', szukseglet: 'needs', wants: 'wants', vagy: 'wants', investments: 'investments', befektetes: 'investments',
 }
 
-// A note or category Excel would run as a formula (=, +, -, @) gets a leading ' so it opens as text; readCsv takes it off.
-const FORMULA = /^[=+\-@\t\r]/
+// A note or category Excel would run as a formula (=, +, -, @) gets a ' so it opens as text; readCsv takes it off.
+// Not only at the start: Excel set to ; as list separator (Hungarian) cuts this comma file at every ; and line break,
+// quoted or not, so whatever follows one starts a cell too.
+const FORMULA = /(^|[;\r\n])(?=[=+\-@\t\r])/g
 const cell = (v: string) => {
-  if (FORMULA.test(v)) v = `'${v}`
+  v = v.replace(FORMULA, "$1'")
   return /[",;\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
 }
-const uncell = (v: string) => (v.startsWith("'") && FORMULA.test(v.slice(1)) ? v.slice(1) : v)
+const uncell = (v: string) => v.replace(/(^|[;\r\n])'(?=[=+\-@\t\r])/g, '$1')
 
 /** Comma-separated with a BOM, so Excel opens the accents right. */
 export function toCsv(txs: Tx[], catName: (id: string) => string) {

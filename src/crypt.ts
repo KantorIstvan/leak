@@ -6,10 +6,14 @@
 // a row both keep their change. Dates, kinds, buckets and the ids linking rows stay readable for the schema's checks.
 
 const PREFIX = 'e1:' // marks a sealed value, and the format version
+// What a value is padded to a multiple of, in bytes: unpadded, the length of the ciphertext tells how many digits an
+// amount has or how long a name is. The IV and the GCM tag add OVERHEAD bytes.
+const PAD = 32
+const OVERHEAD = 12 + 16
 
 /** The sealed columns of each table (the schema's snake_case names). Settings are not sealed. */
 export const SEALED: Record<string, string[]> = {
-  categories: ['name', 'monthly_limit'],
+  categories: ['name', 'monthly_limit', 'icon', 'color'], // the icon and color say what a category is as plainly as its name
   txs: ['note', 'amount', 'orig_amount', 'tags'],
   goals: ['name', 'target', 'saved'],
   subs: ['name', 'amount'],
@@ -71,7 +75,10 @@ export const isSealed = (v: unknown): v is string => typeof v === 'string' && v.
 
 async function encrypt(k: CryptoKey, v: unknown) {
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(JSON.stringify(v))))
+  const json = new TextEncoder().encode(JSON.stringify(v))
+  const padded = new Uint8Array(Math.ceil(json.length / PAD) * PAD).fill(0x20) // spaces, which JSON.parse skips
+  padded.set(json)
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, padded))
   const out = new Uint8Array(iv.length + ct.length)
   out.set(iv)
   out.set(ct, iv.length)
@@ -113,7 +120,11 @@ export async function open(table: string, row: Record<string, unknown>) {
 const values = (table: string, row: Record<string, unknown>) =>
   (SEALED[table] ?? []).flatMap((f) => (row[f] == null ? [] : f === 'tags' ? (row[f] as unknown[]) : [row[f]]))
 
-/** Whether a server row still holds a sensitive value in the clear: saved before encryption, or by an older version. */
-export const isPlain = (table: string, row: Record<string, unknown>) => values(table, row).some((v) => !isSealed(v))
+/**
+ * Whether a server row holds a sensitive value to seal (again): one in the clear, saved before encryption or by an older
+ * version, or one an older version sealed without padding.
+ */
+export const needsSealing = (table: string, row: Record<string, unknown>) =>
+  values(table, row).some((v) => !isSealed(v) || (unb64(v.slice(PREFIX.length)).length - OVERHEAD) % PAD !== 0)
 /** Whether a server row holds anything sealed. */
 export const hasSealed = (table: string, row: Record<string, unknown>) => values(table, row).some(isSealed)
